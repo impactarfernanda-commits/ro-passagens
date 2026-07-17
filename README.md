@@ -11,6 +11,10 @@ Sistema independente para solicitação, compra e controle de custos de deslocam
 
 O app foi alinhado ao schema compartilhado atual: `funcionarios` usa `id`, `nome` e `deleted_at`; `obras` usa `id` e `nome`; `users_profiles` usa `id` e `full_name`; e `user_roles` usa `user_id` e `role`.
 
+## PDFs de passagens
+
+As migrations `202607170003_ro_passagem_anexos.sql` e `202607170004_multiple_passage_pdfs.sql` criam o bucket privado `ro-passagem-anexos`, a tabela de metadados, as políticas e os campos de partida, valor e observação. Cada solicitação aceita múltiplos PDFs de até 10 MB. A leitura tenta extrair somente partida e valor da camada textual, sem OCR; documentos digitalizados como imagem devem ser preenchidos manualmente. O custo de passagem permanece detalhado por PDF e o total é calculado pela soma desses itens.
+
 ## Segurança
 
 As novas tabelas têm RLS. Solicitantes veem seus próprios pedidos; responsáveis RO, gerentes e diretores veem e processam todos. Apenas gerente/diretor administra responsáveis RO. A compra é transacional e a regra de não notificar funcionário em desligamentos é aplicada no banco.
