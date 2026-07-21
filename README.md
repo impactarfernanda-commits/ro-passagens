@@ -18,3 +18,7 @@ As migrations `202607170003_ro_passagem_anexos.sql` e `202607170004_multiple_pas
 ## Segurança
 
 As novas tabelas têm RLS. Solicitantes veem seus próprios pedidos; responsáveis RO, gerentes e diretores veem e processam todos. Apenas gerente/diretor administra responsáveis RO. A compra é transacional e a regra de não notificar funcionário em desligamentos é aplicada no banco.
+
+## E-mail externo
+
+A função `ro-email-notifications` usa Resend e exige as secrets `EMAIL_PROVIDER_API_KEY`, `EMAIL_FROM`, `EMAIL_FROM_NAME` e `APP_PUBLIC_URL`. Nenhuma dessas chaves deve ser adicionada ao `.env` do Vite ou enviada ao navegador. Consulte `supabase/functions/ro-email-notifications/README.md` para configuração e deploy.
