@@ -1,4 +1,4 @@
-export type Motivo='ferias'|'folga_campo'|'desligamento'|'transferencia_obra';
+export type Motivo='ferias'|'folga_campo'|'desligamento'|'transferencia_obra'|'viagem_diretoria';
 export type Status='solicitada'|'em_analise'|'em_andamento'|'passagem_comprada'|'finalizada'|'cancelada';
 export type Funcionario={id:string;nome:string;obra_id?:string|null};
 export type Obra={id:string;nome:string};
