@@ -88,10 +88,16 @@ export function Sidebar({
             </NavLink>
           )}
           {canImport && (
-            <NavLink to="/importacao-funcionarios" onClick={onClose}>
-              <FileSpreadsheet size={19} />
-              Importar funcionários
-            </NavLink>
+            <>
+              <NavLink to="/importacao-funcionarios" onClick={onClose}>
+                <FileSpreadsheet size={19} />
+                Importar funcionários
+              </NavLink>
+              <NavLink to="/importacao-centros-custo" onClick={onClose}>
+                <FileSpreadsheet size={19} />
+                Importar centros de custo
+              </NavLink>
+            </>
           )}
         </nav>
         <div className="side-foot">

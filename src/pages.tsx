@@ -1918,6 +1918,89 @@ type ImportResult = {
   erros: Array<{ nome: string; erro: string }>;
 };
 
+type CostCenterImportRow = { linha: number; codigo: string; descricao: string };
+type CostCenterImportResult = Omit<ImportResult, "erros"> & {
+  erros: Array<CostCenterImportRow & { motivo: string }>;
+};
+
+function cellText(value: unknown) {
+  return String(value ?? "").trim();
+}
+
+function looksLikeCostCenterHeader(row: unknown[]) {
+  const normalize = (value: unknown) => cellText(value).toLowerCase().normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+  return normalize(row[0]).includes("codigo") &&
+    (normalize(row[1]).includes("descricao") || normalize(row[1]).includes("nome"));
+}
+
+function prepareCostCenterRows(rows: unknown[][]) {
+  const nonEmpty = rows.map((row, index) => ({ row, linha: index + 1 }))
+    .filter(({ row }) => row.some((cell) => cellText(cell) !== ""));
+  const data = nonEmpty.length && looksLikeCostCenterHeader(nonEmpty[0].row)
+    ? nonEmpty.slice(1) : nonEmpty;
+  return data.map(({ row, linha }) => ({
+    linha,
+    codigo: cellText(row[0]),
+    descricao: cellText(row[1]),
+  }));
+}
+
+export function ImportacaoCentrosCusto() {
+  const [arquivo, setArquivo] = useState<File | null>(null);
+  const [linhas, setLinhas] = useState<CostCenterImportRow[]>([]);
+  const [resultado, setResultado] = useState<CostCenterImportResult | null>(null);
+  const [erro, setErro] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  async function selecionar(event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0] || null;
+    setArquivo(file); setResultado(null); setErro(""); setLinhas([]);
+    if (!file) return;
+    try {
+      let rows: unknown[][];
+      if (file.name.toLowerCase().endsWith(".csv")) {
+        const csv = Papa.parse<unknown[]>(await file.text(), { header: false, skipEmptyLines: false });
+        if (csv.errors.length) throw new Error(csv.errors[0].message);
+        rows = csv.data;
+      } else if (file.name.toLowerCase().endsWith(".xlsx")) {
+        const sheets = await readXlsxFile(file, { parseNumber: (value) => value });
+        rows = sheets[0]?.data || [];
+      } else throw new Error("Formato inválido");
+      const parsed = prepareCostCenterRows(rows);
+      setLinhas(parsed);
+      if (!parsed.length) setErro("A planilha não contém linhas para importar.");
+    } catch {
+      setErro("Não foi possível ler a planilha. Use um arquivo XLSX ou CSV com duas colunas.");
+    }
+  }
+
+  async function importar() {
+    setBusy(true); setErro(""); setResultado(null);
+    const { data, error } = await supabase.rpc("ro_importar_centros_custo_restritos", { p_linhas: linhas });
+    if (error) setErro(error.message); else setResultado(data as unknown as CostCenterImportResult);
+    setBusy(false);
+  }
+
+  return <Page title="Importar centros de custo" subtitle="Área restrita da administradora do sistema">
+    <section className="card form">
+      <div className="wide">
+        <p><strong>Importe uma planilha sem cabeçalho, com:</strong><br/>Coluna A = Código<br/>Coluna B = Descrição</p>
+        <p>Os códigos serão mantidos como texto. Os centros serão exclusivos do RO Passagens e não aparecerão no Obras Control.</p>
+      </div>
+      <label className="wide">Planilha<input type="file" accept=".xlsx,.csv" onChange={selecionar}/></label>
+      {arquivo && <div className="wide"><strong>{arquivo.name}</strong><p>{linhas.length} linha(s) pronta(s) para validação.</p></div>}
+      {erro && <div className="error wide">{erro}</div>}
+      {resultado && <div className="success wide">
+        <strong>Importação concluída.</strong>
+        <p>{resultado.importados} importados · {resultado.atualizados} atualizados · {resultado.ignorados} ignorados · {resultado.erros.length} erros</p>
+        {resultado.erros.length > 0 && <div className="table-wrap"><table><thead><tr><th>Linha</th><th>Código</th><th>Descrição</th><th>Motivo</th></tr></thead><tbody>{resultado.erros.map((item, index) => <tr key={`${item.linha}-${item.codigo}-${index}`}><td>{item.linha}</td><td>{item.codigo || "—"}</td><td>{item.descricao || "—"}</td><td>{item.motivo}</td></tr>)}</tbody></table></div>}
+      </div>}
+      <div className="actions wide"><button className="btn primary" type="button" disabled={busy || linhas.length === 0} onClick={importar}>{busy ? "Importando..." : "Importar centros de custo"}</button></div>
+    </section>
+  </Page>;
+}
+
 export function ImportacaoFuncionarios() {
   const [arquivo, setArquivo] = useState<File | null>(null);
   const [linhas, setLinhas] = useState<Record<string, string>[]>([]);

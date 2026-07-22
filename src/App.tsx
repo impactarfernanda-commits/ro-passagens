@@ -6,6 +6,7 @@ import { Header, Sidebar, Spinner } from "./components";
 import {
   Dashboard,
   Detalhe,
+  ImportacaoCentrosCusto,
   ImportacaoFuncionarios,
   Login,
   NovaSolicitacao,
@@ -152,6 +153,16 @@ export function App() {
                   element={
                     access.canImport ? (
                       <ImportacaoFuncionarios />
+                    ) : (
+                      <Navigate to="/solicitacoes" replace />
+                    )
+                  }
+                />
+                <Route
+                  path="/importacao-centros-custo"
+                  element={
+                    access.canImport ? (
+                      <ImportacaoCentrosCusto />
                     ) : (
                       <Navigate to="/solicitacoes" replace />
                     )
