@@ -352,7 +352,6 @@ export function Dashboard({ access }: { access: Access }) {
             {alerta("desligamento")}
             {alerta("transferencia_obra")}
             {alertaImprevistos}
-            {alerta("viagem_diretoria")}
           </div>
           <section className="card">
             <h2>Solicitações recentes</h2>

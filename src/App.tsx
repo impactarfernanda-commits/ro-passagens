@@ -14,6 +14,7 @@ import {
   Solicitacoes,
 } from "./pages";
 import { Portal } from "./Portal";
+import { Relatorios } from "./Relatorios";
 
 export type Access = {
   isRO: boolean;
@@ -125,6 +126,16 @@ export function App() {
                   path="/solicitacoes"
                   element={
                     <Solicitacoes access={access} userId={session.user.id} />
+                  }
+                />
+                <Route
+                  path="/relatorios"
+                  element={
+                    access.canViewAll ? (
+                      <Relatorios />
+                    ) : (
+                      <Navigate to="/solicitacoes" replace />
+                    )
                   }
                 />
                 <Route

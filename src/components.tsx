@@ -1,5 +1,6 @@
 import {
   Bell,
+  BarChart3,
   FileSpreadsheet,
   LayoutDashboard,
   ListChecks,
@@ -85,6 +86,12 @@ export function Sidebar({
             <NavLink to="/responsaveis" onClick={onClose}>
               <Settings size={19} />
               Responsáveis RO
+            </NavLink>
+          )}
+          {canViewAll && (
+            <NavLink to="/relatorios" onClick={onClose}>
+              <BarChart3 size={19} />
+              Relatórios
             </NavLink>
           )}
           {canImport && (
