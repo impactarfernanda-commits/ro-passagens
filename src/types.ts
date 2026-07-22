@@ -12,7 +12,12 @@ export type Status =
   | "finalizada"
   | "cancelada";
 export type Funcionario = { id: string; nome: string; obra_id?: string | null };
-export type Obra = { id: string; nome: string };
+export type Obra = {
+  id: string;
+  nome: string;
+  codigo?: string | null;
+  descricao?: string | null;
+};
 export type Perfil = {
   id: string;
   full_name?: string | null;

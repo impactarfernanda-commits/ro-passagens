@@ -27,6 +27,8 @@ import {
   data,
   dataHora,
   dinheiro,
+  centroCustoMatches,
+  formatCentroCustoLabel,
   motivoLabel,
   statusLabel,
   statusOptions,
@@ -45,7 +47,7 @@ import type {
   Status,
 } from "./types";
 const join =
-  "*, funcionario:funcionarios(id,nome), obra:obras!ro_passagem_solicitacoes_obra_id_fkey(id,nome), centro_custo_retorno:obras!ro_passagem_solicitacoes_centro_custo_retorno_id_fkey(id,nome), centro_custo_destino:obras!ro_passagem_solicitacoes_centro_custo_destino_id_fkey(id,nome), custos:ro_passagem_custos(*), notificacoes:ro_passagem_notificacoes(*), historico:ro_passagem_historico(*), anexos:ro_passagem_anexos(*)";
+  "*, funcionario:funcionarios(id,nome), obra:obras!ro_passagem_solicitacoes_obra_id_fkey(id,nome,codigo,descricao), centro_custo_retorno:obras!ro_passagem_solicitacoes_centro_custo_retorno_id_fkey(id,nome,codigo,descricao), centro_custo_destino:obras!ro_passagem_solicitacoes_centro_custo_destino_id_fkey(id,nome,codigo,descricao), custos:ro_passagem_custos(*), notificacoes:ro_passagem_notificacoes(*), historico:ro_passagem_historico(*), anexos:ro_passagem_anexos(*)";
 async function enviarEmailExterno(
   tipo_evento: "nova_solicitacao_ro" | "passagem_comprada_solicitante",
   solicitacao_id: string,
@@ -63,9 +65,14 @@ function useCatalogos() {
     supabase
       .rpc("ro_catalogo_funcionarios")
       .then(({ data }) => setF((data || []) as Funcionario[]));
-    supabase
-      .rpc("ro_catalogo_centros_custo")
-      .then(({ data }) => setO((data || []) as Obra[]));
+    supabase.rpc("ro_catalogo_centros_custo").then(async ({ data }) => {
+      const catalogo = (data || []) as Obra[];
+      if (!catalogo.length) return setO([]);
+      const { data: detalhes } = await supabase.from("obras")
+        .select("id,codigo,descricao").in("id", catalogo.map((obra) => obra.id));
+      const porId = new Map((detalhes || []).map((obra) => [obra.id, obra]));
+      setO(catalogo.map((obra) => ({ ...obra, ...porId.get(obra.id) })));
+    });
   }, []);
   return { funcionarios, obras };
 }
@@ -495,7 +502,10 @@ export function Solicitacoes({
       (!filters.busca ||
         r.funcionario?.nome
           .toLowerCase()
-          .includes(filters.busca.toLowerCase())),
+          .includes(filters.busca.toLowerCase()) ||
+        centroCustoMatches(r.obra || { nome: "" }, filters.busca) ||
+        centroCustoMatches(r.centro_custo_destino || { nome: "" }, filters.busca) ||
+        centroCustoMatches(r.centro_custo_retorno || { nome: "" }, filters.busca)),
   );
   return (
     <Page
@@ -512,7 +522,7 @@ export function Solicitacoes({
         <label>
           <Search size={17} />
           <input
-            placeholder="Buscar funcionário"
+            placeholder="Buscar funcionário ou centro de custo"
             value={filters.busca}
             onChange={(e) => setFilters({ ...filters, busca: e.target.value })}
           />
@@ -566,7 +576,7 @@ export function Solicitacoes({
           <option value="">Todas as obras</option>
           {obras.map((x) => (
             <option value={x.id} key={x.id}>
-              {x.nome}
+              {formatCentroCustoLabel(x)}
             </option>
           ))}
         </select>
@@ -597,7 +607,7 @@ export function Solicitacoes({
                   <tr key={r.id}>
                     <td>
                       <strong>{r.funcionario?.nome || "—"}</strong>
-                      <small>{r.obra?.nome || "Sem obra"}</small>
+                      <small>{formatCentroCustoLabel(r.obra) || "Sem obra"}</small>
                     </td>
                     <td>
                       <strong>
@@ -795,7 +805,7 @@ export function NovaSolicitacao({ userId }: { userId: string }) {
             <option value="">Selecione</option>
             {obras.map((x) => (
               <option value={x.id} key={x.id}>
-                {x.nome}
+                {formatCentroCustoLabel(x)}
               </option>
             ))}
           </select>
@@ -813,7 +823,7 @@ export function NovaSolicitacao({ userId }: { userId: string }) {
               <option value="">Selecione</option>
               {obras.map((x) => (
                 <option value={x.id} key={x.id}>
-                  {x.nome}
+                  {formatCentroCustoLabel(x)}
                 </option>
               ))}
             </select>
@@ -900,7 +910,7 @@ export function NovaSolicitacao({ userId }: { userId: string }) {
                 <option value="">Ainda não definido</option>
                 {obras.map((x) => (
                   <option value={x.id} key={x.id}>
-                    {x.nome}
+                    {formatCentroCustoLabel(x)}
                   </option>
                 ))}
               </select>
@@ -1095,8 +1105,8 @@ export function Detalhe({ access }: { access: Access }) {
                 .assumida_em,
             )}
           />
-          <DT t="Centro de custo atual" v={row.obra?.nome} />
-          <DT t="Centro de custo destino" v={row.centro_custo_destino?.nome} />
+          <DT t="Centro de custo atual" v={formatCentroCustoLabel(row.obra)} />
+          <DT t="Centro de custo destino" v={formatCentroCustoLabel(row.centro_custo_destino)} />
           <DT t="Origem" v={row.origem} />
           <DT t="Destino" v={row.destino} />
           <DT t="Ida prevista" v={data(row.data_ida)} />
@@ -1108,7 +1118,7 @@ export function Detalhe({ access }: { access: Access }) {
                 v={
                   row.retorno_indefinido
                     ? "Indefinido"
-                    : row.centro_custo_retorno?.nome
+                    : formatCentroCustoLabel(row.centro_custo_retorno)
                 }
               />
             </>
@@ -1845,7 +1855,7 @@ function Compra({
               <option value="">Selecione</option>
               {obras.map((obra) => (
                 <option key={obra.id} value={obra.id}>
-                  {obra.nome}
+                  {formatCentroCustoLabel(obra)}
                 </option>
               ))}
             </select>
