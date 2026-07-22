@@ -658,7 +658,6 @@ export function NovaSolicitacao({ userId }: { userId: string }) {
   const [erro, setErro] = useState("");
   const [solicitante, setSolicitante] = useState("");
   const [podeExceder, setPodeExceder] = useState(false);
-  const [isRO, setIsRO] = useState(false);
   const [form, setForm] = useState({
     funcionario_id: "",
     obra_id: "",
@@ -688,9 +687,6 @@ export function NovaSolicitacao({ userId }: { userId: string }) {
     supabase
       .rpc("ro_is_admin", { p_user: userId })
       .then(({ data }) => setPodeExceder(Boolean(data)));
-    supabase
-      .rpc("ro_can_operate", { p_user: userId })
-      .then(({ data }) => setIsRO(Boolean(data)));
   }, [userId]);
   const idaMinima = (() => {
     const d = new Date();
@@ -719,9 +715,7 @@ export function NovaSolicitacao({ userId }: { userId: string }) {
     });
   }
   function pickMotivo(motivo: Motivo | "") {
-    const temRetorno = ["ferias", "folga_campo", "viagem_diretoria"].includes(
-      motivo,
-    );
+    const temRetorno = ["ferias", "folga_campo"].includes(motivo);
     setForm({
       ...form,
       motivo,
@@ -739,12 +733,6 @@ export function NovaSolicitacao({ userId }: { userId: string }) {
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     setErro("");
-    if (form.motivo === "viagem_diretoria" && !isRO) {
-      setErro(
-        "Apenas responsáveis RO ativos podem registrar Viagem diretoria.",
-      );
-      return;
-    }
     if (!funcionarioRestrito && !form.motivo) {
       setErro("Selecione o motivo da solicitação.");
       return;
@@ -869,8 +857,8 @@ export function NovaSolicitacao({ userId }: { userId: string }) {
             onChange={(e) => pickMotivo(e.target.value as Motivo | "")}
           >
             <option value="">{funcionarioRestrito ? "Não se aplica" : "Selecione"}</option>
-            {Object.entries(motivoLabel)
-              .filter(([v]) => v !== "viagem_diretoria" || isRO)
+            {!funcionarioRestrito && Object.entries(motivoLabel)
+              .filter(([v]) => v !== "viagem_diretoria")
               .map(([v, l]) => (
                 <option value={v} key={v}>
                   {l}
@@ -888,19 +876,6 @@ export function NovaSolicitacao({ userId }: { userId: string }) {
             onChange={(e) => setForm({ ...form, data_ida: e.target.value })}
           />
         </label>
-        {form.motivo === "viagem_diretoria" && (
-          <label>
-            Data de retorno
-            <input
-              type="date"
-              min={form.data_ida}
-              value={form.data_retorno}
-              onChange={(e) =>
-                setForm({ ...form, data_retorno: e.target.value })
-              }
-            />
-          </label>
-        )}
         {exigePrazo && (
           <>
             <label>
