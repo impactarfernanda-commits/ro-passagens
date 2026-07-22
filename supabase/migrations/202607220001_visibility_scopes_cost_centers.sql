@@ -6,11 +6,31 @@ alter table public.funcionarios
   add column if not exists visivel_passagens boolean not null default true,
   add column if not exists escopo_passagens text not null default 'comum';
 
+update public.funcionarios
+set
+  visivel_obras_control = coalesce(visivel_obras_control, true),
+  visivel_passagens = coalesce(visivel_passagens, true),
+  escopo_passagens = coalesce(escopo_passagens, 'comum')
+where visivel_obras_control is null
+   or visivel_passagens is null
+   or escopo_passagens is null;
+
 alter table public.obras
   add column if not exists visivel_obras_control boolean not null default true,
   add column if not exists visivel_passagens boolean not null default true,
   add column if not exists escopo_passagens text not null default 'comum',
   add column if not exists tipo_centro_custo text default 'obra';
+
+update public.obras
+set
+  visivel_obras_control = coalesce(visivel_obras_control, true),
+  visivel_passagens = coalesce(visivel_passagens, true),
+  escopo_passagens = coalesce(escopo_passagens, 'comum'),
+  tipo_centro_custo = coalesce(tipo_centro_custo, 'obra')
+where visivel_obras_control is null
+   or visivel_passagens is null
+   or escopo_passagens is null
+   or tipo_centro_custo is null;
 
 alter table public.ro_passagem_custos
   add column if not exists centro_custo_id uuid references public.obras(id);
