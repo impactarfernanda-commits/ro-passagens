@@ -49,16 +49,6 @@ import type {
 } from "./types";
 const join =
   "*, funcionario:funcionarios(id,nome), obra:obras!ro_passagem_solicitacoes_obra_id_fkey(id,nome,codigo,descricao), centro_custo_retorno:obras!ro_passagem_solicitacoes_centro_custo_retorno_id_fkey(id,nome,codigo,descricao), centro_custo_destino:obras!ro_passagem_solicitacoes_centro_custo_destino_id_fkey(id,nome,codigo,descricao), custos:ro_passagem_custos(*), notificacoes:ro_passagem_notificacoes(*), historico:ro_passagem_historico(*), anexos:ro_passagem_anexos(*)";
-async function enviarEmailExterno(
-  tipo_evento: "nova_solicitacao_ro" | "passagem_comprada_solicitante",
-  solicitacao_id: string,
-  anexo_ids?: string[],
-) {
-  const { error } = await supabase.functions.invoke("ro-email-notifications", {
-    body: { tipo_evento, solicitacao_id, anexo_ids },
-  });
-  return !error;
-}
 function useCatalogos() {
   const [funcionarios, setF] = useState<Funcionario[]>([]);
   const [obras, setO] = useState<Obra[]>([]);
@@ -769,9 +759,6 @@ export function NovaSolicitacao({ userId }: { userId: string }) {
       setBusy(false);
       return;
     }
-    void enviarEmailExterno("nova_solicitacao_ro", created.id).then((ok) => {
-      if (!ok) console.error("Solicitação criada, mas a notificação por e-mail da equipe RO falhou.");
-    });
     nav(`/solicitacoes/${created.id}`);
   }
   return (
@@ -1641,16 +1628,7 @@ function Compra({
             p_custos: custos,
           });
       if (error) throw new Error(error.message);
-      const emailOk = await enviarEmailExterno(
-        "passagem_comprada_solicitante",
-        row.id,
-        complementar ? undefined : anexoIds,
-      );
-      window.alert(
-        emailOk
-          ? "Passagem registrada. O solicitante será notificado por e-mail."
-          : "Passagem registrada, mas houve falha ao enviar o e-mail ao solicitante.",
-      );
+      window.alert("Passagem registrada com sucesso.");
       onDone();
     } catch (error) {
       if (anexoIds.length)
