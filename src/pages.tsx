@@ -769,6 +769,9 @@ export function NovaSolicitacao({ userId }: { userId: string }) {
       setBusy(false);
       return;
     }
+    void enviarEmailExterno("nova_solicitacao_ro", created.id).then((ok) => {
+      if (!ok) console.error("Solicitação criada, mas a notificação por e-mail da equipe RO falhou.");
+    });
     nav(`/solicitacoes/${created.id}`);
   }
   return (
@@ -968,7 +971,6 @@ export function Detalhe({ access }: { access: Access }) {
   const [row, setRow] = useState<Solicitacao | null>(null);
   const [loading, setLoading] = useState(true);
   const [erro, setErro] = useState("");
-  const [emailNotice, setEmailNotice] = useState("");
   const load = useCallback(() => {
     if (!id) return;
     supabase
@@ -1019,24 +1021,6 @@ export function Detalhe({ access }: { access: Access }) {
       });
   }, [id]);
   useEffect(load, [load]);
-  useEffect(() => {
-    if (
-      !row ||
-      row.motivo === "viagem_diretoria" ||
-      Date.now() - new Date(row.created_at).getTime() > 120000
-    )
-      return;
-    const key = `ro-email-created-${row.id}`;
-    if (sessionStorage.getItem(key)) return;
-    sessionStorage.setItem(key, "1");
-    void enviarEmailExterno("nova_solicitacao_ro", row.id).then((ok) =>
-      setEmailNotice(
-        ok
-          ? "Solicitação criada. A equipe RO será notificada por e-mail."
-          : "Solicitação criada, mas houve falha ao enviar o e-mail para a equipe RO.",
-      ),
-    );
-  }, [row]);
   if (loading)
     return (
       <Page title="Solicitação">
@@ -1060,11 +1044,6 @@ export function Detalhe({ access }: { access: Access }) {
         </Link>
       }
     >
-      {emailNotice && (
-        <div className={emailNotice.includes("falha") ? "alert" : "success"}>
-          {emailNotice}
-        </div>
-      )}
       <div className="detail-head">
         <StatusBadge status={statusLabel[row.status]} />
         <span>{formatMotivoLabel(row.motivo)}</span>
