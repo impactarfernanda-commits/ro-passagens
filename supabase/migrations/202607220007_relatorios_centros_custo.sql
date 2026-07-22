@@ -85,8 +85,13 @@ begin
         or (p_sem_centro and coalesce(c.centro_custo_id, s.obra_id) is null)
      group by coalesce(c.centro_custo_id, s.obra_id)
   ),
+  centros_relatorio as (
+    select centro_custo_id from operacional
+    union
+    select centro_custo_id from financeiro
+  ),
   grupos as (
-    select coalesce(op.centro_custo_id, fi.centro_custo_id) as centro_custo_id,
+    select cr.centro_custo_id,
            coalesce(op.solicitacoes, 0) as solicitacoes,
            coalesce(op.compradas, 0) as compradas,
            coalesce(op.abertas, 0) as abertas,
@@ -95,8 +100,9 @@ begin
            coalesce(op.imprevistos, 0) as imprevistos,
            coalesce(fi.valor_total, 0) as valor_total,
            coalesce(fi.valor_complementar, 0) as valor_complementar
-      from operacional op
-      full join financeiro fi on fi.centro_custo_id is not distinct from op.centro_custo_id
+      from centros_relatorio cr
+      left join operacional op on op.centro_custo_id is not distinct from cr.centro_custo_id
+      left join financeiro fi on fi.centro_custo_id is not distinct from cr.centro_custo_id
   )
   select jsonb_build_object(
     'linhas', coalesce((
