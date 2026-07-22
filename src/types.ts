@@ -3,6 +3,9 @@ export type Motivo =
   | "folga_campo"
   | "desligamento"
   | "transferencia_obra"
+  | "admissao"
+  | "inicio_obra"
+  | "retorno_obra"
   | "viagem_diretoria";
 export type Status =
   | "solicitada"
@@ -11,7 +14,14 @@ export type Status =
   | "passagem_comprada"
   | "finalizada"
   | "cancelada";
-export type Funcionario = { id: string; nome: string; obra_id?: string | null };
+export type Funcionario = {
+  id: string;
+  nome: string;
+  obra_id?: string | null;
+  visivel_obras_control?: boolean;
+  visivel_passagens?: boolean;
+  escopo_passagens?: string;
+};
 export type Obra = {
   id: string;
   nome: string;
@@ -70,7 +80,7 @@ export type Solicitacao = {
   solicitante_id: string;
   origem: string;
   destino: string;
-  motivo: Motivo;
+  motivo: Motivo | null;
   data_ida: string;
   data_retorno: string | null;
   centro_custo_retorno_id: string | null;

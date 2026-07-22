@@ -1,5 +1,6 @@
 import type {Motivo,Obra,Status} from './types';
-export const motivoLabel:Record<Motivo,string>={ferias:'Férias',folga_campo:'Folga de campo',desligamento:'Desligamento',transferencia_obra:'Transferência de obra',viagem_diretoria:'Viagem diretoria'};
+export const motivoLabel:Record<Motivo,string>={ferias:'Férias',folga_campo:'Folga de campo',desligamento:'Desligamento',transferencia_obra:'Transferência de obra',admissao:'Admissão',inicio_obra:'Início na obra',retorno_obra:'Retorno à obra',viagem_diretoria:'Viagem diretoria'};
+export const formatMotivoLabel=(motivo?:Motivo|null)=>motivo?motivoLabel[motivo]:'Não se aplica';
 export const statusLabel:Record<Status,string>={solicitada:'Solicitada',em_analise:'Em andamento',em_andamento:'Em andamento',passagem_comprada:'Passagem comprada',finalizada:'Finalizada',cancelada:'Cancelada'};
 export const statusOptions:ReadonlyArray<{value:Exclude<Status,'em_analise'>;label:string}>=[
   {value:'solicitada',label:'Solicitada'},

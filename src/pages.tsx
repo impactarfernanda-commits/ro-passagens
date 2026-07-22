@@ -29,6 +29,7 @@ import {
   dinheiro,
   centroCustoMatches,
   formatCentroCustoLabel,
+  formatMotivoLabel,
   motivoLabel,
   statusLabel,
   statusOptions,
@@ -63,7 +64,7 @@ function useCatalogos() {
   const [obras, setO] = useState<Obra[]>([]);
   useEffect(() => {
     supabase
-      .rpc("ro_catalogo_funcionarios")
+      .rpc("ro_catalogo_funcionarios_solicitacao")
       .then(({ data }) => setF((data || []) as Funcionario[]));
     supabase.rpc("ro_catalogo_centros_custo").then(async ({ data }) => {
       const catalogo = (data || []) as Obra[];
@@ -269,7 +270,7 @@ export function Dashboard({ access }: { access: Access }) {
     const ida = new Date(`${r.data_ida}T00:00:00`);
     const limite = new Date(hoje);
     limite.setDate(
-      limite.getDate() + (["ferias", "folga_campo"].includes(r.motivo) ? 2 : 0),
+      limite.getDate() + (["ferias", "folga_campo"].includes(r.motivo || "") ? 2 : 0),
     );
     return ida <= limite;
   });
@@ -630,7 +631,7 @@ export function Solicitacoes({
                     <td>
                       {r.origem} → {r.destino}
                     </td>
-                    <td>{motivoLabel[r.motivo]}</td>
+                    <td>{formatMotivoLabel(r.motivo)}</td>
                     <td>{data(r.data_ida)}</td>
                     <td>
                       <StatusBadge status={statusLabel[r.status]} />
@@ -663,7 +664,7 @@ export function NovaSolicitacao({ userId }: { userId: string }) {
     obra_id: "",
     origem: "",
     destino: "",
-    motivo: "ferias" as Motivo,
+    motivo: "" as Motivo | "",
     data_ida: "",
     data_retorno: "",
     centro_custo_retorno_id: "",
@@ -698,6 +699,13 @@ export function NovaSolicitacao({ userId }: { userId: string }) {
     return d.toISOString().slice(0, 10);
   })();
   const exigePrazo = ["ferias", "folga_campo"].includes(form.motivo);
+  const funcionarioSelecionado = funcionarios.find((x) => x.id === form.funcionario_id);
+  const funcionarioRestrito = Boolean(
+    funcionarioSelecionado &&
+    funcionarioSelecionado.visivel_obras_control === false &&
+    funcionarioSelecionado.visivel_passagens === true &&
+    funcionarioSelecionado.escopo_passagens === "restrito_ro",
+  );
   const foraPrazo =
     exigePrazo && Boolean(form.data_ida) && form.data_ida < idaMinima;
   function pickFuncionario(id: string) {
@@ -706,9 +714,11 @@ export function NovaSolicitacao({ userId }: { userId: string }) {
       ...form,
       funcionario_id: id,
       obra_id: f?.obra_id || form.obra_id,
+      motivo: f?.visivel_obras_control === false && f.visivel_passagens === true &&
+        f.escopo_passagens === "restrito_ro" ? "" : form.motivo,
     });
   }
-  function pickMotivo(motivo: Motivo) {
+  function pickMotivo(motivo: Motivo | "") {
     const temRetorno = ["ferias", "folga_campo", "viagem_diretoria"].includes(
       motivo,
     );
@@ -735,6 +745,10 @@ export function NovaSolicitacao({ userId }: { userId: string }) {
       );
       return;
     }
+    if (!funcionarioRestrito && !form.motivo) {
+      setErro("Selecione o motivo da solicitação.");
+      return;
+    }
     if (foraPrazo && !podeExceder) {
       setErro(
         `Solicitações de férias e folga de campo devem ser feitas com pelo menos 10 dias de antecedência. A primeira data permitida é ${data(idaMinima)}.`,
@@ -752,6 +766,7 @@ export function NovaSolicitacao({ userId }: { userId: string }) {
       .from("ro_passagem_solicitacoes")
       .insert({
         ...form,
+        motivo: form.motivo || null,
         obra_id: form.obra_id || null,
         data_retorno: form.data_retorno || null,
         centro_custo_retorno_id: form.centro_custo_retorno_id || null,
@@ -847,11 +862,13 @@ export function NovaSolicitacao({ userId }: { userId: string }) {
           />
         </label>
         <label>
-          Motivo *
+          Motivo{funcionarioRestrito ? "" : " *"}
           <select
+            required={!funcionarioRestrito}
             value={form.motivo}
-            onChange={(e) => pickMotivo(e.target.value as Motivo)}
+            onChange={(e) => pickMotivo(e.target.value as Motivo | "")}
           >
+            <option value="">{funcionarioRestrito ? "Não se aplica" : "Selecione"}</option>
             {Object.entries(motivoLabel)
               .filter(([v]) => v !== "viagem_diretoria" || isRO)
               .map(([v, l]) => (
@@ -1075,7 +1092,7 @@ export function Detalhe({ access }: { access: Access }) {
       )}
       <div className="detail-head">
         <StatusBadge status={statusLabel[row.status]} />
-        <span>{motivoLabel[row.motivo]}</span>
+        <span>{formatMotivoLabel(row.motivo)}</span>
         {row.motivo === "desligamento" && (
           <span className="sensitive">
             Notificação ao funcionário bloqueada
@@ -1109,7 +1126,7 @@ export function Detalhe({ access }: { access: Access }) {
           <DT t="Origem" v={row.origem} />
           <DT t="Destino" v={row.destino} />
           <DT t="Ida prevista" v={data(row.data_ida)} />
-          {["ferias", "folga_campo"].includes(row.motivo) && (
+          {["ferias", "folga_campo"].includes(row.motivo || "") && (
             <>
               <DT t="Retorno previsto" v={data(row.data_retorno)} />
               <DT
