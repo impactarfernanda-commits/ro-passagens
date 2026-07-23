@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Papa from "papaparse";
 import readXlsxFile from "read-excel-file/browser";
 import {
@@ -1460,6 +1460,8 @@ function Compra({
   const { obras } = useCatalogos();
   const [busy, setBusy] = useState(false);
   const [pdfs, setPdfs] = useState<PdfDraft[]>([]);
+  const [draggingPdfs, setDraggingPdfs] = useState(false);
+  const dragDepth = useRef(0);
   const [erro, setErro] = useState("");
   const [form, setForm] = useState({
     observacoes_ro: row.observacoes_ro || "",
@@ -1508,9 +1510,7 @@ function Compra({
     }
   }
 
-  function selecionarPdfs(event: React.ChangeEvent<HTMLInputElement>) {
-    const files = Array.from(event.target.files || []);
-    event.target.value = "";
+  function adicionarPdfs(files: File[]) {
     setErro("");
     for (const file of files) {
       const validationError = validatePdfFile(file);
@@ -1534,6 +1534,31 @@ function Compra({
       setPdfs((current) => [...current, draft]);
       void lerPdf(draft);
     }
+  }
+
+  function selecionarPdfs(event: React.ChangeEvent<HTMLInputElement>) {
+    adicionarPdfs(Array.from(event.target.files || []));
+    event.target.value = "";
+  }
+
+  function entrarNaArea(event: React.DragEvent<HTMLLabelElement>) {
+    event.preventDefault();
+    if (busy) return;
+    dragDepth.current += 1;
+    setDraggingPdfs(true);
+  }
+
+  function sairDaArea(event: React.DragEvent<HTMLLabelElement>) {
+    event.preventDefault();
+    dragDepth.current = Math.max(0, dragDepth.current - 1);
+    if (dragDepth.current === 0) setDraggingPdfs(false);
+  }
+
+  function soltarPdfs(event: React.DragEvent<HTMLLabelElement>) {
+    event.preventDefault();
+    dragDepth.current = 0;
+    setDraggingPdfs(false);
+    if (!busy) adicionarPdfs(Array.from(event.dataTransfer.files));
   }
 
   async function submit(e: React.FormEvent) {
@@ -1665,18 +1690,21 @@ function Compra({
             <h3>PDFs das passagens</h3>
             <p>Opcional · PDF de até 10 MB por arquivo</p>
           </div>
-          <label className="btn secondary add-pdfs">
-            <Upload size={16} />
-            Adicionar PDFs
-            <input
-              type="file"
-              accept="application/pdf,.pdf"
-              multiple
-              onChange={selecionarPdfs}
-              disabled={busy}
-            />
-          </label>
         </div>
+        <label
+          className={`pdf-drop-zone${draggingPdfs ? " dragging" : ""}${busy ? " disabled" : ""}`}
+          onDragEnter={entrarNaArea}
+          onDragOver={(event) => event.preventDefault()}
+          onDragLeave={sairDaArea}
+          onDrop={soltarPdfs}
+        >
+          <Upload size={20} />
+          <span>
+            <strong>{draggingPdfs ? "Solte o PDF aqui" : "Arraste o PDF aqui ou clique para selecionar"}</strong>
+            <small>Você pode adicionar vários PDFs de até 10 MB cada.</small>
+          </span>
+          <input type="file" accept="application/pdf,.pdf" multiple onChange={selecionarPdfs} disabled={busy}/>
+        </label>
         {pdfs.length === 0 ? (
           <div className="pdfs-empty">
             <FileText />
