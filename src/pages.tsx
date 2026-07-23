@@ -1901,7 +1901,7 @@ type ImportResult = {
   importados: number;
   atualizados: number;
   ignorados: number;
-  erros: Array<{ nome: string; erro: string }>;
+  erros: Array<{ linha: number; nome: string; motivo: string }>;
 };
 
 type CostCenterImportRow = { linha: number; codigo: string; descricao: string };
@@ -1989,21 +1989,29 @@ export function ImportacaoCentrosCusto() {
 
 export function ImportacaoFuncionarios() {
   const [arquivo, setArquivo] = useState<File | null>(null);
-  const [linhas, setLinhas] = useState<Record<string, string>[]>([]);
+  const [linhas, setLinhas] = useState<Array<{ linha: number; nome: string }>>([]);
   const [resultado, setResultado] = useState<ImportResult | null>(null);
   const [erro, setErro] = useState("");
   const [busy, setBusy] = useState(false);
 
-  function normalizarCabecalho(value: unknown) {
-    return String(value ?? "").trim().toLowerCase().normalize("NFD")
-      .replace(/[\u0300-\u036f]/g, "").replace(/\s+/g, "_");
+  function normalizarNome(value: unknown) {
+    return String(value ?? "").trim().replace(/\s+/g, " ");
   }
 
-  function prepararLinhas(raw: Record<string, unknown>[]) {
-    return raw.map((row) => {
-      const normalized = Object.fromEntries(Object.entries(row).map(([key, value]) => [normalizarCabecalho(key), String(value ?? "").trim()]));
-      return { nome: normalized.nome || "", funcao: normalized.funcao || "", status: normalized.status || "Ativo" };
-    });
+  function ehCabecalhoAcidental(value: string) {
+    const normalized = value.toLowerCase().normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "");
+    return ["nome", "funcionario", "colaborador"].includes(normalized);
+  }
+
+  function prepararLinhas(rows: unknown[][]) {
+    const nonEmpty = rows.map((row, index) => ({
+      linha: index + 1,
+      nome: normalizarNome(row[0]),
+    })).filter(({ nome }) => nome !== "");
+    return nonEmpty.length && ehCabecalhoAcidental(nonEmpty[0].nome)
+      ? nonEmpty.slice(1)
+      : nonEmpty;
   }
 
   async function selecionar(event: React.ChangeEvent<HTMLInputElement>) {
@@ -2011,21 +2019,12 @@ export function ImportacaoFuncionarios() {
     setArquivo(file); setResultado(null); setErro(""); setLinhas([]);
     if (!file) return;
     try {
-      let raw: Record<string, unknown>[];
-      if (file.name.toLowerCase().endsWith(".csv")) {
-        const csv = Papa.parse<Record<string, unknown>>(await file.text(), { header: true, skipEmptyLines: true });
-        if (csv.errors.length) throw new Error(csv.errors[0].message);
-        raw = csv.data;
-      } else {
-        const sheets = await readXlsxFile(file);
-        const rows = sheets[0]?.data || [];
-        const headers = (rows[0] || []).map(normalizarCabecalho);
-        raw = rows.slice(1).filter((row) => row.some((cell) => cell !== null && cell !== "")).map((row) => Object.fromEntries(headers.map((header, index) => [header, row[index] ?? ""])));
-      }
-      const parsed = prepararLinhas(raw);
+      if (!file.name.toLowerCase().endsWith(".xlsx")) throw new Error("Formato inválido");
+      const sheets = await readXlsxFile(file);
+      const parsed = prepararLinhas(sheets[0]?.data || []);
       setLinhas(parsed);
-      if (!parsed.length) setErro("A planilha não contém linhas para importar.");
-    } catch { setErro("Não foi possível ler a planilha. Use XLSX ou CSV."); }
+      if (!parsed.length) setErro("A planilha não contém nomes para importar.");
+    } catch { setErro("Não foi possível ler a planilha. Use um arquivo XLSX válido."); }
   }
 
   async function importar() {
@@ -2037,13 +2036,16 @@ export function ImportacaoFuncionarios() {
 
   return <Page title="Importar funcionários" subtitle="Área restrita da administradora do sistema">
     <section className="card form">
-      <div className="wide"><p>Colunas aceitas: <strong>nome</strong> (obrigatória), função e status. Os registros serão restritos ao RO e não aparecerão no Obras Control.</p></div>
+      <div className="wide">
+        <p><strong>Importe uma planilha XLSX sem cabeçalho, com:</strong><br/>Coluna A = Nome do funcionário</p>
+        <p>A primeira aba será lida. Linhas vazias e um cabeçalho acidental serão ignorados. Os registros serão restritos ao RO e não aparecerão no Obras Control.</p>
+      </div>
       <label className="wide">Planilha
-        <input type="file" accept=".xlsx,.csv" onChange={selecionar}/>
+        <input type="file" accept=".xlsx" onChange={selecionar}/>
       </label>
       {arquivo&&<div className="wide"><strong>{arquivo.name}</strong><p>{linhas.length} linha(s) pronta(s) para validação.</p></div>}
       {erro&&<div className="error wide">{erro}</div>}
-      {resultado&&<div className="success wide"><strong>Importação concluída.</strong><p>{resultado.importados} importados · {resultado.atualizados} atualizados · {resultado.ignorados} ignorados · {resultado.erros.length} erros</p>{resultado.erros.length>0&&<ul>{resultado.erros.map((item,index)=><li key={`${item.nome}-${index}`}>{item.nome||`Linha ${index+1}`}: {item.erro}</li>)}</ul>}</div>}
+      {resultado&&<div className="success wide"><strong>Importação concluída.</strong><p>{resultado.importados} importados · {resultado.atualizados} atualizados · {resultado.ignorados} ignorados · {resultado.erros.length} erros</p>{resultado.erros.length>0&&<div className="table-wrap"><table><thead><tr><th>Linha</th><th>Nome</th><th>Motivo</th></tr></thead><tbody>{resultado.erros.map((item,index)=><tr key={`${item.linha}-${item.nome}-${index}`}><td>{item.linha}</td><td>{item.nome||"—"}</td><td>{item.motivo}</td></tr>)}</tbody></table></div>}</div>}
       <div className="actions wide"><button className="btn primary" type="button" disabled={busy||linhas.length===0} onClick={importar}>{busy?"Importando...":"Importar funcionários"}</button></div>
     </section>
   </Page>;
