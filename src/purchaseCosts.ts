@@ -1,9 +1,15 @@
-export type TicketCostInput = { nome_arquivo: string; valor: string | number };
+import {
+  calcularCustosSemDuplicidade,
+  type PassagemDocument,
+} from "./passagemGrouping";
+
+export type TicketCostInput = PassagemDocument;
 export type ManualCostInput = {
   uber: string | number;
   refeicao: string | number;
   outros: string | number;
 };
+
 export function buildPurchaseCosts(
   solicitacaoId: string,
   pdfs: TicketCostInput[],
@@ -11,13 +17,13 @@ export function buildPurchaseCosts(
   centroCustoId: string,
 ) {
   return [
-    ...pdfs
-      .filter((pdf) => Number(pdf.valor) > 0)
-      .map((pdf) => ({
+    ...calcularCustosSemDuplicidade(pdfs)
+      .filter((group) => group.value > 0 && !group.conflictingValues)
+      .map((group) => ({
         solicitacao_id: solicitacaoId,
         tipo: "passagem" as const,
-        descricao: "PDF: " + pdf.nome_arquivo,
-        valor: Number(pdf.valor),
+        descricao: `Passagem agrupada (${group.documents.length} documento(s)): ${group.documents.map((pdf) => pdf.nome_arquivo).join(", ")}`,
+        valor: group.value,
         centro_custo_id: centroCustoId,
       })),
     ...(["uber", "refeicao", "outros"] as const)
@@ -30,6 +36,11 @@ export function buildPurchaseCosts(
       })),
   ];
 }
+
 export function totalTicketValues(pdfs: TicketCostInput[]) {
-  return pdfs.reduce((total, pdf) => total + Number(pdf.valor || 0), 0);
+  return calcularCustosSemDuplicidade(pdfs).reduce(
+    (total, group) =>
+      total + (group.conflictingValues ? 0 : Number(group.value)),
+    0,
+  );
 }

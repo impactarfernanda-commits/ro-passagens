@@ -3,6 +3,7 @@ import { Download } from "lucide-react";
 import { Empty, Page, Spinner } from "./components";
 import { dinheiro, formatCentroCustoLabel, motivoLabel, statusOptions } from "./lib";
 import { supabase } from "./supabase";
+import { useAutoFinalization } from "./autoFinalization";
 import type { Obra } from "./types";
 
 type LinhaRelatorio = Obra & {
@@ -60,6 +61,7 @@ export function Relatorios() {
     else setDados((data || vazio) as unknown as RelatorioData);
     setLoading(false);
   }, [aplicados]);
+  useAutoFinalization(true, carregar);
   useEffect(() => { void carregar(); }, [carregar]);
 
   const linhas = useMemo(() => [...dados.linhas].sort((a, b) => {

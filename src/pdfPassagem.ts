@@ -9,5 +9,5 @@ export async function extractTicketDataFromPdf(file:File){
   GlobalWorkerOptions.workerSrc=workerUrl;
   const document=await getDocument({data:new Uint8Array(await file.arrayBuffer())}).promise;const pages:string[]=[];
   for(let index=1;index<=document.numPages;index+=1){const page=await document.getPage(index);const content=await page.getTextContent();pages.push(content.items.map(item=>'str'in item?item.str:'').join(' '))}
-  return extractTicketDataFromText(pages.join('\n'));
+  return extractTicketDataFromText(pages.join('\n'),file.name);
 }

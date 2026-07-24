@@ -22,6 +22,7 @@ import {
 } from "react-router-dom";
 import type { Access } from "./App";
 import { EnvWarning } from "./App";
+import { useAutoFinalization } from "./autoFinalization";
 import { BrandLogo, Empty, Page, Spinner, StatusBadge } from "./components";
 import {
   data,
@@ -36,6 +37,7 @@ import {
 } from "./lib";
 import { validatePdfFile } from "./pdfFileValidation";
 import { extractTicketDataFromPdf } from "./pdfPassagem";
+import { calcularCustosSemDuplicidade } from "./passagemGrouping";
 import { buildPurchaseCosts, totalTicketValues } from "./purchaseCosts";
 import { supabase } from "./supabase";
 import type {
@@ -221,7 +223,7 @@ export function Login() {
 export function Dashboard({ access }: { access: Access }) {
   const [rows, setRows] = useState<Solicitacao[]>([]);
   const [loading, setLoading] = useState(true);
-  useEffect(() => {
+  const loadDashboard = useCallback(() => {
     supabase
       .from("ro_passagem_solicitacoes")
       .select(join)
@@ -231,6 +233,8 @@ export function Dashboard({ access }: { access: Access }) {
         setLoading(false);
       });
   }, []);
+  useEffect(loadDashboard, [loadDashboard]);
+  useAutoFinalization(access.canViewAll, loadDashboard);
   const hoje = new Date();
   hoje.setHours(0, 0, 0, 0);
   const mes = new Date().toISOString().slice(0, 7);
@@ -444,6 +448,7 @@ export function Solicitacoes({
     setRows(loaded);
     setLoading(false);
   }, [access.canViewAll, userId]);
+  useAutoFinalization(access.canViewAll, load);
   useEffect(() => {
     load();
   }, [load]);
@@ -1334,20 +1339,27 @@ function PassagemComprada({
     custos
       .filter((c) => c.tipo === tipo)
       .reduce((total, c) => total + Number(c.valor), 0);
-  const totalAnexos = anexos.reduce(
-    (total, a) => total + Number(a.valor || 0),
-    0,
-  );
   const complementares = anexos.filter((a) => a.complementar);
-  const custoComplementar = complementares.reduce(
-    (total, a) => total + Number(a.valor || 0),
-    0,
-  );
-  const totalPassagens = totalAnexos || soma("passagem");
+  const custoComplementar = custos
+    .filter(
+      (c) =>
+        c.tipo === "passagem" &&
+        c.descricao?.toLocaleLowerCase("pt-BR").startsWith("passagem complementar:"),
+    )
+    .reduce((total, custo) => total + Number(custo.valor), 0);
+  const totalPassagens = soma("passagem");
   const uber = soma("uber");
   const refeicao = soma("refeicao");
   const outros = soma("outros");
   const totalGeral = totalPassagens + uber + refeicao + outros;
+  const custoLabel = (custo: Custo) =>
+    custo.descricao ||
+    {
+      passagem: "Passagem",
+      uber: "Uber/local",
+      refeicao: "Refeição/ajuda",
+      outros: "Outros",
+    }[custo.tipo];
   return (
     <section className="card attachment-card">
       <div className="attachment-title">
@@ -1367,6 +1379,29 @@ function PassagemComprada({
           </span>
         </div>
       )}
+      <section className="financial-costs">
+        <h3>Custos financeiros</h3>
+        {custos.length === 0 ? (
+          <p className="attachment-empty">Nenhum custo financeiro registrado.</p>
+        ) : (
+          <div className="financial-cost-list">
+            {custos.map((custo) => (
+              <div key={custo.id}>
+                <span>
+                  <strong>{custoLabel(custo)}</strong>
+                  <small>
+                    {custo.tipo === "passagem"
+                      ? "Passagem comprada"
+                      : "Custo adicional"}
+                  </small>
+                </span>
+                <strong>{dinheiro(Number(custo.valor))}</strong>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+      <h3 className="documents-heading">Documentos anexados</h3>
       {anexos.length === 0 ? (
         <p className="attachment-empty">Nenhum PDF anexado.</p>
       ) : (
@@ -1384,8 +1419,8 @@ function PassagemComprada({
                     {anexo.complementar ? " · Complementar" : ""}
                   </strong>
                   <small>
-                    Partida: {dataHora(anexo.partida_em)} · Valor:{" "}
-                    {anexo.valor == null ? "—" : dinheiro(Number(anexo.valor))}
+                    Partida: {dataHora(anexo.partida_em)} · Documento de apoio,
+                    sem custo financeiro próprio
                   </small>
                   {anexo.imprevisto && (
                     <small className="sensitive">Imprevisto</small>
@@ -1445,9 +1480,42 @@ type PdfDraft = {
   partida_em: string;
   valor: string;
   observacao: string;
+  passageiro: string;
+  documento: string;
+  origem: string;
+  destino: string;
+  poltrona: string;
+  localizador: string;
+  numero_bilhete: string;
+  tipo_documento: "voucher" | "bilhete_embarque" | "documento_sem_valor" | "documento";
+  valores_financeiros_divergentes: boolean;
   extracting: boolean;
   message: { kind: "success" | "warning"; text: string } | null;
 };
+type CompraForm = {
+  observacoes_ro: string;
+  uber: string;
+  refeicao: string;
+  outros: string;
+  centro_custo_id: string;
+  imprevisto: boolean;
+  motivo_complementar: string;
+};
+type PurchaseDraft = {
+  pdfs: PdfDraft[];
+  form: CompraForm;
+  updatedAt: number;
+};
+const purchaseDraftBySolicitacaoId = new Map<string, PurchaseDraft>();
+const initialCompraForm = (row: Solicitacao): CompraForm => ({
+  observacoes_ro: row.observacoes_ro || "",
+  uber: "",
+  refeicao: "",
+  outros: "",
+  centro_custo_id: "",
+  imprevisto: false,
+  motivo_complementar: "",
+});
 function Compra({
   row,
   onDone,
@@ -1458,28 +1526,46 @@ function Compra({
   complementar?: boolean;
 }) {
   const { obras } = useCatalogos();
+  const draftKey = `${row.id}:${complementar ? "complementar" : "inicial"}`;
+  const savedDraft = purchaseDraftBySolicitacaoId.get(draftKey);
   const [busy, setBusy] = useState(false);
-  const [pdfs, setPdfs] = useState<PdfDraft[]>([]);
+  const [pdfs, setPdfs] = useState<PdfDraft[]>(savedDraft?.pdfs || []);
+  const [minimized, setMinimized] = useState(false);
   const [draggingPdfs, setDraggingPdfs] = useState(false);
   const dragDepth = useRef(0);
   const [erro, setErro] = useState("");
-  const [form, setForm] = useState({
-    observacoes_ro: row.observacoes_ro || "",
-    uber: "",
-    refeicao: "",
-    outros: "",
-    centro_custo_id: "",
-    imprevisto: false,
-    motivo_complementar: "",
-  });
-  const extracting = pdfs.some((pdf) => pdf.extracting);
-  const totalPassagens = totalTicketValues(
-    pdfs.map((pdf) => ({ nome_arquivo: pdf.file.name, valor: pdf.valor })),
+  const [form, setForm] = useState<CompraForm>(
+    savedDraft?.form || initialCompraForm(row),
   );
-  const updatePdf = (id: string, patch: Partial<PdfDraft>) =>
+  useEffect(() => {
+    purchaseDraftBySolicitacaoId.set(draftKey, {
+      pdfs,
+      form,
+      updatedAt: Date.now(),
+    });
+  }, [draftKey, form, pdfs]);
+  const extracting = pdfs.some((pdf) => pdf.extracting);
+  const documentos = pdfs.map((pdf) => ({
+    ...pdf,
+    nome_arquivo: pdf.file.name,
+  }));
+  const grupos = calcularCustosSemDuplicidade(documentos);
+  const totalPassagens = totalTicketValues(documentos);
+  const valoresDivergentes = grupos.some((grupo) => grupo.conflictingValues);
+  const updatePdf = (id: string, patch: Partial<PdfDraft>) => {
+    const stored = purchaseDraftBySolicitacaoId.get(draftKey);
+    if (stored)
+      purchaseDraftBySolicitacaoId.set(draftKey, {
+        ...stored,
+        pdfs: stored.pdfs.map((pdf) =>
+          pdf.id === id ? { ...pdf, ...patch } : pdf,
+        ),
+        updatedAt: Date.now(),
+      });
     setPdfs((current) =>
       current.map((pdf) => (pdf.id === id ? { ...pdf, ...patch } : pdf)),
     );
+  };
 
   async function lerPdf(draft: PdfDraft) {
     try {
@@ -1488,6 +1574,16 @@ function Compra({
       updatePdf(draft.id, {
         partida_em: extracted.partida_em || "",
         valor: extracted.valor_passagem || "",
+        passageiro: extracted.passageiro || "",
+        documento: extracted.documento || "",
+        origem: extracted.origem || "",
+        destino: extracted.destino || "",
+        poltrona: extracted.poltrona || "",
+        localizador: extracted.localizador || "",
+        numero_bilhete: extracted.numero_bilhete || "",
+        tipo_documento: extracted.tipo_documento || "documento",
+        valores_financeiros_divergentes:
+          extracted.valores_financeiros_divergentes || false,
         extracting: false,
         message: found
           ? {
@@ -1528,10 +1624,27 @@ function Compra({
         partida_em: "",
         valor: "",
         observacao: "",
+        passageiro: "",
+        documento: "",
+        origem: "",
+        destino: "",
+        poltrona: "",
+        localizador: "",
+        numero_bilhete: "",
+        tipo_documento: "documento",
+        valores_financeiros_divergentes: false,
         extracting: true,
         message: null,
       };
-      setPdfs((current) => [...current, draft]);
+      setPdfs((current) => {
+        const next = [...current, draft];
+        purchaseDraftBySolicitacaoId.set(draftKey, {
+          pdfs: next,
+          form,
+          updatedAt: Date.now(),
+        });
+        return next;
+      });
       void lerPdf(draft);
     }
   }
@@ -1564,6 +1677,12 @@ function Compra({
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     if (extracting) return;
+    if (valoresDivergentes) {
+      setErro(
+        "Documentos parecem ser da mesma passagem, mas possuem valores diferentes. Revise antes de confirmar.",
+      );
+      return;
+    }
     setBusy(true);
     setErro("");
     const storagePaths: string[] = [];
@@ -1572,6 +1691,26 @@ function Compra({
     try {
       const user = (await supabase.auth.getUser()).data.user;
       if (!user) throw new Error("Sessão expirada. Entre novamente.");
+      const financeiroPorDocumento = new Map(
+        grupos.flatMap((grupo) =>
+          grupo.documents.map((documento) => [
+            documento.id,
+            documento.id === grupo.financialDocumentId ? grupo.value : 0,
+          ] as const),
+        ),
+      );
+      const agrupamentoPorDocumento = new Map(
+        grupos.flatMap((grupo, indice) =>
+          grupo.documents.map((documento) => [
+            documento.id,
+            {
+              indice: indice + 1,
+              quantidade: grupo.documents.length,
+              valor: grupo.value,
+            },
+          ] as const),
+        ),
+      );
       for (const pdf of pdfs) {
         const safeName = pdf.file.name
           .normalize("NFD")
@@ -1587,6 +1726,11 @@ function Compra({
           });
         if (upload.error)
           throw new Error("Não foi possível enviar " + pdf.file.name + ".");
+        const agrupamento = agrupamentoPorDocumento.get(pdf.id);
+        const valorFinanceiro = financeiroPorDocumento.get(pdf.id) || 0;
+        const notaAgrupamento = agrupamento
+          ? `Grupo ${agrupamento.indice}: ${agrupamento.quantidade} documento(s), valor único R$ ${agrupamento.valor.toFixed(2)}. Tipo: ${pdf.tipo_documento}.`
+          : "";
         const metadata = {
           nome_arquivo: pdf.file.name,
           storage_path: storagePath,
@@ -1595,8 +1739,10 @@ function Compra({
           partida_em: pdf.partida_em
             ? new Date(pdf.partida_em).toISOString()
             : "",
-          valor: pdf.valor || "",
-          observacao: pdf.observacao.trim(),
+          valor: valorFinanceiro || "",
+          observacao: [notaAgrupamento, pdf.observacao.trim()]
+            .filter(Boolean)
+            .join(" "),
         };
         if (complementar) anexosComplementares.push(metadata);
         else {
@@ -1622,7 +1768,7 @@ function Compra({
       }
       const custos = buildPurchaseCosts(
         row.id,
-        pdfs.map((pdf) => ({ nome_arquivo: pdf.file.name, valor: pdf.valor })),
+        documentos,
         form,
         form.centro_custo_id,
       );
@@ -1653,6 +1799,7 @@ function Compra({
             p_custos: custos,
           });
       if (error) throw new Error(error.message);
+      purchaseDraftBySolicitacaoId.delete(draftKey);
       window.alert("Passagem registrada com sucesso.");
       onDone();
     } catch (error) {
@@ -1670,6 +1817,39 @@ function Compra({
     }
   }
 
+  function descartarRascunho() {
+    if (
+      pdfs.length > 0 &&
+      !window.confirm(
+        "Existem arquivos selecionados ainda não salvos. Deseja descartar?",
+      )
+    )
+      return;
+    purchaseDraftBySolicitacaoId.delete(draftKey);
+    setPdfs([]);
+    setForm(initialCompraForm(row));
+    setErro("");
+  }
+
+  if (minimized)
+    return (
+      <section className="card purchase-draft-collapsed">
+        <div>
+          <strong>Compra minimizada</strong>
+          <small>
+            {pdfs.length} PDF(s) preservado(s) localmente, sem upload.
+          </small>
+        </div>
+        <button
+          type="button"
+          className="btn secondary"
+          onClick={() => setMinimized(false)}
+        >
+          Reabrir compra
+        </button>
+      </section>
+    );
+
   return (
     <form className="card form purchase" onSubmit={submit}>
       <div className="wide section-title">
@@ -1682,8 +1862,22 @@ function Compra({
           </h2>
           <p>Anexe uma ou mais passagens e confira partida e valor.</p>
         </div>
+        <button
+          type="button"
+          className="btn secondary purchase-minimize"
+          onClick={() => setMinimized(true)}
+          disabled={busy}
+        >
+          Minimizar
+        </button>
       </div>
       {erro && <div className="error wide">{erro}</div>}
+      {valoresDivergentes && (
+        <div className="error wide">
+          Documentos parecem ser da mesma passagem, mas possuem valores
+          diferentes. Revise antes de confirmar.
+        </div>
+      )}
       <section className="wide pdfs-section">
         <div className="pdfs-heading">
           <div>
@@ -1785,8 +1979,71 @@ function Compra({
                     />
                   </label>
                 </div>
+                <small className="pdf-classification">
+                  Tipo reconhecido:{" "}
+                  {pdf.tipo_documento === "voucher"
+                    ? "Voucher/comprovante"
+                    : pdf.tipo_documento === "bilhete_embarque"
+                      ? "Bilhete de embarque"
+                      : pdf.valor
+                        ? "Documento financeiro"
+                        : "Documento sem valor"}
+                  {pdf.localizador && ` · Localizador ${pdf.localizador}`}
+                  {pdf.numero_bilhete && ` · Bilhete ${pdf.numero_bilhete}`}
+                  {pdf.passageiro && ` · ${pdf.passageiro}`}
+                </small>
               </article>
             ))}
+          </div>
+        )}
+        {grupos.length > 0 && !extracting && (
+          <div className="passagem-groups">
+            {grupos.map((grupo, index) => {
+              const valorDoGrupo = (
+                field:
+                  | "passageiro"
+                  | "origem"
+                  | "destino"
+                  | "partida_em"
+                  | "poltrona",
+              ) =>
+                grupo.documents
+                  .map((document) => document[field])
+                  .find((value) => typeof value === "string" && value);
+              const passageiro = valorDoGrupo("passageiro") as string | undefined;
+              const origem = valorDoGrupo("origem") as string | undefined;
+              const destino = valorDoGrupo("destino") as string | undefined;
+              const partida = valorDoGrupo("partida_em") as string | undefined;
+              const poltrona = valorDoGrupo("poltrona") as string | undefined;
+              return (
+                <div
+                  key={`${grupo.key}-${index}`}
+                  className={grupo.conflictingValues ? "conflict" : ""}
+                >
+                  <strong>Passagem reconhecida</strong>
+                  <span>
+                    {passageiro || "Passageiro não identificado"}
+                    {" · "}
+                    {origem && destino
+                      ? `${origem} → ${destino}`
+                      : "Trecho não identificado"}
+                    {partida && ` · ${dataHora(partida)}`}
+                    {poltrona && ` · Poltrona ${poltrona}`}
+                  </span>
+                  <small>
+                    Documentos: {grupo.documents.length} · Valor considerado:{" "}
+                    {grupo.value > 0 ? dinheiro(grupo.value) : "sem custo"}
+                    {grupo.needsReview && " · Pendente de revisão"}
+                  </small>
+                  {grupo.documentMismatch && (
+                    <small>
+                      Documento divergente entre arquivos; agrupado por nome,
+                      data, poltrona e trecho.
+                    </small>
+                  )}
+                </div>
+              );
+            })}
           </div>
         )}
         <div className="tickets-total">
@@ -1880,8 +2137,21 @@ function Compra({
       )}
       <div className="actions wide">
         <button
+          type="button"
+          className="btn secondary"
+          onClick={descartarRascunho}
+          disabled={busy}
+        >
+          Cancelar
+        </button>
+        <button
           className="btn primary"
-          disabled={busy || extracting || (complementar && pdfs.length === 0)}
+          disabled={
+            busy ||
+            extracting ||
+            valoresDivergentes ||
+            (complementar && pdfs.length === 0)
+          }
         >
           <CheckCircle2 size={17} />
           {busy
