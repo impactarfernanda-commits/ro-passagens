@@ -1550,6 +1550,11 @@ function Compra({
     nome_arquivo: pdf.file.name,
   }));
   const grupos = calcularCustosSemDuplicidade(documentos);
+  const grupoPorDocumento = new Map(
+    grupos.flatMap((grupo) =>
+      grupo.documents.map((documento) => [documento.id, grupo] as const),
+    ),
+  );
   const totalPassagens = totalTicketValues(documentos);
   const valoresDivergentes = grupos.some((grupo) => grupo.conflictingValues);
   const updatePdf = (id: string, patch: Partial<PdfDraft>) => {
@@ -1909,7 +1914,12 @@ function Compra({
           </div>
         ) : (
           <div className="pdf-drafts">
-            {pdfs.map((pdf) => (
+            {pdfs.map((pdf) => {
+              const grupoDoPdf = grupoPorDocumento.get(pdf.id);
+              const bilheteInformativo =
+                pdf.tipo_documento === "bilhete_embarque" &&
+                grupoDoPdf?.valueSource === "voucher";
+              return (
               <article key={pdf.id} className="pdf-draft">
                 <div className="pdf-draft-head">
                   <div>
@@ -1956,16 +1966,30 @@ function Compra({
                     />
                   </label>
                   <label>
-                    Valor da passagem (R$)
+                    {bilheteInformativo
+                      ? "Valor informativo do bilhete (R$)"
+                      : "Valor da passagem (R$)"}
                     <input
                       type="number"
                       min="0"
                       step="0.01"
                       value={pdf.valor}
+                      readOnly={bilheteInformativo}
+                      aria-describedby={
+                        bilheteInformativo
+                          ? `ticket-value-help-${pdf.id}`
+                          : undefined
+                      }
                       onChange={(e) =>
                         updatePdf(pdf.id, { valor: e.target.value })
                       }
                     />
+                    {bilheteInformativo && (
+                      <small id={`ticket-value-help-${pdf.id}`}>
+                        Valor tarifário do BP-e. O custo financeiro deste grupo
+                        é definido pelo voucher.
+                      </small>
+                    )}
                   </label>
                   <label className="wide">
                     Observação
@@ -1993,7 +2017,8 @@ function Compra({
                   {pdf.passageiro && ` · ${pdf.passageiro}`}
                 </small>
               </article>
-            ))}
+              );
+            })}
           </div>
         )}
         {grupos.length > 0 && !extracting && (

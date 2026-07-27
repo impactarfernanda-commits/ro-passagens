@@ -103,6 +103,23 @@ const official = extractTicketDataFromText(
 );
 assert(official.tipo_documento === "bilhete_embarque", "BP-e deve ser bilhete oficial");
 
+const piracicabanaLike = extractTicketDataFromText(
+  "Tarifa R$ 48,00 Pedágio R$ 2,00 Taxa de Embarque R$ 2,10 Valor a Pagar R$ 52,10 Número do comprovante /403384 Data 28/07/2026 Partida 12:00 Poltrona 17",
+  "BILHETE PIRACICABANA - MARCOS ANTONIO BRASILINO SCARLOS_RPRETO.pdf",
+);
+assert(
+  piracicabanaLike.tipo_documento === "bilhete_embarque",
+  "bilhete com número de comprovante não pode virar voucher",
+);
+assert(
+  piracicabanaLike.partida_em === "2026-07-28T12:00",
+  "data e hora separadas do BP-e devem ser combinadas",
+);
+assert(
+  !piracicabanaLike.valores_financeiros_divergentes,
+  "componentes tarifários internos do BP-e não devem gerar bloqueio",
+);
+
 const voucher = extractTicketDataFromText(
   "Pedido concluído Detalhes do pagamento Valor Total R$ 71,95 Localizador 010331153048",
   "VOUCHER RODOVIARIO.pdf",

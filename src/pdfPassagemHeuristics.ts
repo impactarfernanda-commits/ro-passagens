@@ -87,6 +87,16 @@ function parseDateTime(value: string) {
   return `${year.toString().padStart(4, "0")}-${month.toString().padStart(2, "0")}-${day.toString().padStart(2, "0")}T${hour.toString().padStart(2, "0")}:${minute.toString().padStart(2, "0")}`;
 }
 
+function parseSeparatedDepartureDateTime(text: string) {
+  const date = text.match(
+    /\b(?:data(?:\s+(?:da\s+)?(?:viagem|partida|embarque))?|partida)\b\s*[:#-]?\s*(\d{1,2}[/. -]\d{1,2}[/. -]\d{2,4})/i,
+  )?.[1];
+  const time = text.match(
+    /\b(?:partida|sa[ií]da|embarque|hor[aá]rio)\b(?:\s+(?:prevista|de\s+sa[ií]da))?\s*[:#-]?\s*(\d{1,2}[:h]\d{2})/i,
+  )?.[1];
+  return date && time ? parseDateTime(`${date} ${time}`) : "";
+}
+
 const invalidPassengerTerms =
   /\b(?:JA TENHA IMPRESSO|BILHETE ELETRONICO|RETIRADA GUICHE|ORIENTACOES GERAIS|CANCELAMENTOS?|ALTERACOES|APRESENTE SEU DOCUMENTO|TUDO CERTO|DETALHES DAS PASSAGENS|NOME DO PASSAGEIRO|SEU PEDIDO|DOCUMENTO DE IDENTIFICACAO)\b/i;
 
@@ -172,7 +182,7 @@ export function extractTicketDataFromText(
       "Total", "Valor", "Tarifa",
     ];
     const labelled = (labels: string[]) => capture(text, labels, stops);
-    const partida = parseDateTime(labelled([
+    const partida = parseSeparatedDepartureDateTime(text) || parseDateTime(labelled([
       "Data\\s+e\\s+hora\\s+de\\s+sa[ií]da", "Data\\s+de\\s+partida",
       "Embarque", "Sa[ií]da", "Partida", "Data",
     ])) || parseDateTime(text);
@@ -207,7 +217,7 @@ export function extractTicketDataFromText(
       : "";
     const normalizedText = normalizePassagemKey(`${fileName} ${text}`);
     const hasOfficialTicketTerms =
-      /\b(?:DOCUMENTO AUXILIAR DO BILHETE DE PASSAGEM ELETRONICO|BP E|VALOR A PAGAR|FORMA PAGAMENTO|ACESSO AO PORTAO DE EMBARQUE|TAXA DE EMBARQUE|PEDAGIO)\b/.test(
+      /\b(?:DOCUMENTO AUXILIAR DO BILHETE DE PASSAGEM ELETRONICO|DOCUMENTO AUXILIAR DO BP E|DABPE|BP E|NUMERO DO BILHETE|N BILHETE|VALOR A PAGAR|TARIFA|FORMA PAGAMENTO|ACESSO AO PORTAO DE EMBARQUE|TAXA DE EMBARQUE|PEDAGIO)\b/.test(
         normalizedText,
       );
     const hasVoucherTerms =
