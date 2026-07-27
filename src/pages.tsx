@@ -2024,22 +2024,6 @@ function Compra({
         {grupos.length > 0 && !extracting && (
           <div className="passagem-groups">
             {grupos.map((grupo, index) => {
-              const valorDoGrupo = (
-                field:
-                  | "passageiro"
-                  | "origem"
-                  | "destino"
-                  | "partida_em"
-                  | "poltrona",
-              ) =>
-                grupo.documents
-                  .map((document) => document[field])
-                  .find((value) => typeof value === "string" && value);
-              const passageiro = valorDoGrupo("passageiro") as string | undefined;
-              const origem = valorDoGrupo("origem") as string | undefined;
-              const destino = valorDoGrupo("destino") as string | undefined;
-              const partida = valorDoGrupo("partida_em") as string | undefined;
-              const poltrona = valorDoGrupo("poltrona") as string | undefined;
               return (
                 <div
                   key={`${grupo.key}-${index}`}
@@ -2047,13 +2031,16 @@ function Compra({
                 >
                   <strong>Passagem reconhecida</strong>
                   <span>
-                    {passageiro || "Passageiro não identificado"}
+                    {grupo.consolidatedPassenger ||
+                      "Passageiro não identificado"}
                     {" · "}
-                    {origem && destino
-                      ? `${origem} → ${destino}`
+                    {grupo.consolidatedOrigin && grupo.consolidatedDestination
+                      ? `${grupo.consolidatedOrigin} → ${grupo.consolidatedDestination}`
                       : "Trecho não identificado"}
-                    {partida && ` · ${dataHora(partida)}`}
-                    {poltrona && ` · Poltrona ${poltrona}`}
+                    {grupo.consolidatedDeparture &&
+                      ` · ${dataHora(grupo.consolidatedDeparture)}`}
+                    {grupo.consolidatedSeat &&
+                      ` · Poltrona ${grupo.consolidatedSeat}`}
                   </span>
                   <small>
                     Documentos: {grupo.documents.length} · Valor considerado:{" "}

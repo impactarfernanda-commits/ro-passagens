@@ -137,4 +137,91 @@ assert(
   "Marcos deve gerar um único custo financeiro de R$ 71,95",
 );
 
+const marcosComplementaryDocuments = [
+  {
+    id: "marcos-bpe-incompleto",
+    nome_arquivo:
+      "BILHETE PIRACICABANA - MARCOS ANTONIO BRASILINO SCARLOS_RPRETO.pdf",
+    valor: 52.1,
+    origem: "Terminal Rodoviário de São Carlos/SP",
+    destino: "Terminal Rodoviário de Ribeirão Preto/SP",
+    numero_bilhete: "403384",
+    tipo_documento: "bilhete_embarque" as const,
+  },
+  {
+    id: "marcos-voucher-incompleto",
+    nome_arquivo:
+      "VOUCHER RODOVIARIO - MARCOS ANTONIO BRASILINO SCARLOS_RPRETO.pdf",
+    valor: 71.95,
+    passageiro: "MARCOS ANTONIO BRASILINO",
+    documento: "08458887819",
+    partida_em: "2026-07-28T12:00",
+    poltrona: "17",
+    localizador: "010331153048",
+    tipo_documento: "voucher" as const,
+  },
+];
+const marcosComplementaryGroups = groupPdfDocumentsByPassagem(
+  marcosComplementaryDocuments,
+);
+assert(
+  marcosComplementaryGroups.length === 1,
+  "Marcos incompleto deve agrupar por evidência complementar",
+);
+const marcosComplementary = marcosComplementaryGroups[0];
+assert(marcosComplementary.documents.length === 2, "Marcos deve manter dois PDFs");
+assert(
+  marcosComplementary.consolidatedPassenger === "MARCOS ANTONIO BRASILINO" &&
+    marcosComplementary.consolidatedOrigin ===
+      "Terminal Rodoviário de São Carlos/SP" &&
+    marcosComplementary.consolidatedDestination ===
+      "Terminal Rodoviário de Ribeirão Preto/SP" &&
+    marcosComplementary.consolidatedDeparture === "2026-07-28T12:00" &&
+    marcosComplementary.consolidatedSeat === "17" &&
+    marcosComplementary.consolidatedLocator === "010331153048",
+  "Marcos deve consolidar os campos complementares",
+);
+assert(
+  marcosComplementary.value === 71.95 &&
+    marcosComplementary.informationalTicketValues[0] === 52.1 &&
+    !marcosComplementary.conflictingValues,
+  "Marcos deve usar somente R$ 71,95 e manter R$ 52,10 informativo",
+);
+assert(
+  buildPurchaseCosts(
+    "solicitacao-marcos-complementar",
+    marcosComplementaryDocuments,
+    { uber: "", refeicao: "", outros: "" },
+    "centro-custo",
+  ).length === 1,
+  "Marcos incompleto deve gerar um único custo",
+);
+
+const differentPassengers = groupPdfDocumentsByPassagem([
+  complementaryPair("PASSAGEIRO UM", 70, 60)[0],
+  {
+    ...complementaryPair("PASSAGEIRO DOIS", 70, 60)[1],
+    localizador: "",
+    numero_bilhete: "",
+  },
+]);
+assert(
+  differentPassengers.length === 2,
+  "passageiros explicitamente diferentes devem permanecer separados",
+);
+
+const ambiguousComplementaryDocuments = groupPdfDocumentsByPassagem([
+  marcosComplementaryDocuments[0],
+  {
+    ...marcosComplementaryDocuments[0],
+    id: "segundo-bpe-incompleto",
+    numero_bilhete: "999999",
+  },
+  marcosComplementaryDocuments[1],
+]);
+assert(
+  ambiguousComplementaryDocuments.length === 3,
+  "pares complementares ambíguos não devem ser agrupados automaticamente",
+);
+
 console.log("Cenários de hierarquia de valores aprovados.");
