@@ -4,6 +4,16 @@ export type DocumentType =
   | "documento_sem_valor"
   | "documento";
 
+export type DocumentValueSource = "voucher" | "bilhete_oficial" | "desconhecido";
+
+export function classifyDocumentValueSource(
+  tipoDocumento?: DocumentType,
+): DocumentValueSource {
+  if (tipoDocumento === "voucher") return "voucher";
+  if (tipoDocumento === "bilhete_embarque") return "bilhete_oficial";
+  return "desconhecido";
+}
+
 export type PurchaseData = {
   partida_em: string;
   valor_passagem: string;
@@ -195,10 +205,26 @@ export function extractTicketDataFromText(
     const numeroBilhete = /\d/.test(numeroBilheteCandidate)
       ? numeroBilheteCandidate
       : "";
-    const hasBoardingTerms = /\b(QR|embarque|poltrona|assento)\b/i.test(text);
-    const tipoDocumento: DocumentType =
-      financial.value || localizador || numeroBilhete ? "voucher" :
-      hasBoardingTerms ? "bilhete_embarque" : "documento_sem_valor";
+    const normalizedText = normalizePassagemKey(`${fileName} ${text}`);
+    const hasOfficialTicketTerms =
+      /\b(?:DOCUMENTO AUXILIAR DO BILHETE DE PASSAGEM ELETRONICO|BP E|VALOR A PAGAR|FORMA PAGAMENTO|ACESSO AO PORTAO DE EMBARQUE|TAXA DE EMBARQUE|PEDAGIO)\b/.test(
+        normalizedText,
+      );
+    const hasVoucherTerms =
+      /\b(?:PEDIDO CONCLUIDO|DETALHES DO PAGAMENTO|VALOR TOTAL|VALOR POR POLTRONA|COMPROVANTE|VOUCHER|RODOVIARIAONLINE|QUERO PASSAGEM)\b/.test(
+        normalizedText,
+      );
+    const hasBoardingTerms =
+      /\b(?:QR|EMBARQUE|POLTRONA|ASSENTO|BILHETE)\b/.test(normalizedText);
+    const tipoDocumento: DocumentType = hasOfficialTicketTerms
+      ? "bilhete_embarque"
+      : hasVoucherTerms || (localizador && financial.value)
+        ? "voucher"
+        : hasBoardingTerms
+          ? "bilhete_embarque"
+          : financial.value
+            ? "documento"
+            : "documento_sem_valor";
     return {
       ...(partida && { partida_em: partida }),
       ...(financial.value && { valor_passagem: financial.value }),
@@ -210,7 +236,8 @@ export function extractTicketDataFromText(
       ...(localizador && { localizador }),
       ...(numeroBilhete && { numero_bilhete: numeroBilhete }),
       tipo_documento: tipoDocumento,
-      valores_financeiros_divergentes: financial.divergent,
+      valores_financeiros_divergentes:
+        tipoDocumento !== "bilhete_embarque" && financial.divergent,
     };
   } catch {
     return {};

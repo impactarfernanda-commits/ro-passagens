@@ -1,4 +1,5 @@
 import {
+  classifyDocumentValueSource,
   normalizePassagemKey,
   type DocumentType,
 } from "./pdfPassagemHeuristics";
@@ -26,6 +27,10 @@ export type PassagemGroup = {
   conflictingValues: boolean;
   needsReview: boolean;
   documentMismatch: boolean;
+  financialDocumentId: string;
+  valueSource: "voucher" | "bilhete_oficial" | "desconhecido" | "nenhum";
+  informationalTicketValues: number[];
+  valueHierarchyNotice: boolean;
 };
 
 const normalized = (value?: string) => normalizePassagemKey(value || "");
@@ -102,22 +107,57 @@ export function groupPdfDocumentsByPassagem(
     else groups.push([document]);
   }
   return groups.map((group, index) => {
-    const values = [
+    const validDocuments = group.filter((item) => {
+      const value = Number(item.valor);
+      return Number.isFinite(value) && value > 0;
+    });
+    const voucherDocuments = validDocuments.filter(
+      (item) => classifyDocumentValueSource(item.tipo_documento) === "voucher",
+    );
+    const officialDocuments = validDocuments.filter(
+      (item) =>
+        classifyDocumentValueSource(item.tipo_documento) === "bilhete_oficial",
+    );
+    const unknownDocuments = validDocuments.filter(
+      (item) =>
+        classifyDocumentValueSource(item.tipo_documento) === "desconhecido",
+    );
+    const selectedDocuments = voucherDocuments.length
+      ? voucherDocuments
+      : officialDocuments.length
+        ? officialDocuments
+        : unknownDocuments;
+    const selectedValues = [
       ...new Set(
-        group
+        selectedDocuments
           .map((item) => Number(item.valor))
-          .filter((value) => Number.isFinite(value) && value > 0)
           .map((value) => value.toFixed(2)),
       ),
     ].map(Number);
+    const informationalTicketValues = [
+      ...new Set(officialDocuments.map((item) => Number(item.valor).toFixed(2))),
+    ]
+      .map(Number)
+      .filter((value) => !selectedValues.includes(value));
+    const selectedSource = selectedDocuments[0]
+      ? classifyDocumentValueSource(selectedDocuments[0].tipo_documento)
+      : "nenhum";
+    const conflictingValues =
+      selectedValues.length > 1 ||
+      selectedDocuments.some(
+        (document) => document.valores_financeiros_divergentes,
+      );
     return {
       key: extractPassagemSignature(group[0]) || `PENDENTE:${index}`,
       documents: group,
-      value: values[0] || 0,
-      conflictingValues:
-        values.length > 1 ||
-        group.some((document) => document.valores_financeiros_divergentes),
-      needsReview: values.length === 0,
+      value: selectedValues[0] || 0,
+      conflictingValues,
+      needsReview: selectedValues.length === 0 || conflictingValues,
+      financialDocumentId: selectedDocuments[0]?.id || group[0].id,
+      valueSource: selectedSource,
+      informationalTicketValues,
+      valueHierarchyNotice:
+        voucherDocuments.length > 0 && informationalTicketValues.length > 0,
       documentMismatch: group.some((left, leftIndex) =>
         group.slice(leftIndex + 1).some((right) => {
           const leftDocument = digits(left.documento);
@@ -134,10 +174,5 @@ export function groupPdfDocumentsByPassagem(
 }
 
 export function calcularCustosSemDuplicidade(documents: PassagemDocument[]) {
-  return groupPdfDocumentsByPassagem(documents).map((group) => ({
-    ...group,
-    financialDocumentId:
-      group.documents.find((document) => Number(document.valor) > 0)?.id ||
-      group.documents[0].id,
-  }));
+  return groupPdfDocumentsByPassagem(documents);
 }

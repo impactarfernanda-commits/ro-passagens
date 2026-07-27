@@ -2033,8 +2033,21 @@ function Compra({
                   <small>
                     Documentos: {grupo.documents.length} · Valor considerado:{" "}
                     {grupo.value > 0 ? dinheiro(grupo.value) : "sem custo"}
+                    {grupo.valueSource === "voucher" && " (voucher/comprovante)"}
+                    {grupo.valueSource === "bilhete_oficial" &&
+                      " (bilhete oficial)"}
                     {grupo.needsReview && " · Pendente de revisão"}
                   </small>
+                  {grupo.valueHierarchyNotice && (
+                    <small>
+                      Bilhete oficial possui valor tarifário de{" "}
+                      {grupo.informationalTicketValues
+                        .map((value) => dinheiro(value))
+                        .join(", ")}
+                      . Valor financeiro considerado pelo voucher:{" "}
+                      {dinheiro(grupo.value)}.
+                    </small>
+                  )}
                   {grupo.documentMismatch && (
                     <small>
                       Documento divergente entre arquivos; agrupado por nome,
