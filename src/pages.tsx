@@ -220,43 +220,91 @@ export function Login() {
     </div>
   );
 }
+type DashboardMonthlyCost = {
+  id: string;
+  solicitacao_id: string;
+  tipo: Custo["tipo"];
+  descricao: string | null;
+  valor: number;
+  created_at: string;
+  solicitacao: {
+    id: string;
+    status: Status;
+    motivo: Motivo | null;
+    houve_imprevisto: boolean | null;
+    funcionario?: Pick<Funcionario, "id" | "nome">;
+    anexos?: Array<Pick<Anexo, "complementar" | "imprevisto">>;
+  };
+};
+
+function uniqueMonthlyRequests(custos: DashboardMonthlyCost[]) {
+  return [
+    ...new Map(
+      custos.map((custo) => [
+        custo.solicitacao.id,
+        custo.solicitacao,
+      ]),
+    ).values(),
+  ];
+}
+
 export function Dashboard({ access }: { access: Access }) {
   const [rows, setRows] = useState<Solicitacao[]>([]);
+  const [custosMensais, setCustosMensais] = useState<DashboardMonthlyCost[]>([]);
+  const [mesReferencia, setMesReferencia] = useState(
+    () =>
+      `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, "0")}`,
+  );
   const [loading, setLoading] = useState(true);
-  const loadDashboard = useCallback(() => {
-    supabase
-      .from("ro_passagem_solicitacoes")
-      .select(join)
-      .order("created_at", { ascending: false })
-      .then(({ data }) => {
-        setRows((data || []) as unknown as Solicitacao[]);
-        setLoading(false);
-      });
-  }, []);
-  useEffect(loadDashboard, [loadDashboard]);
+  const loadDashboard = useCallback(async () => {
+    setLoading(true);
+    const [ano, mes] = mesReferencia.split("-").map(Number);
+    const inicioMes = new Date(ano, mes - 1, 1).toISOString();
+    const inicioMesSeguinte = new Date(ano, mes, 1).toISOString();
+    const [solicitacoesResult, custosResult] = await Promise.all([
+      supabase
+        .from("ro_passagem_solicitacoes")
+        .select(join)
+        .order("created_at", { ascending: false }),
+      supabase
+        .from("ro_passagem_custos")
+        .select(
+          "id,solicitacao_id,tipo,descricao,valor,created_at,solicitacao:ro_passagem_solicitacoes!inner(id,status,motivo,houve_imprevisto,funcionario:funcionarios(id,nome),anexos:ro_passagem_anexos(complementar,imprevisto))",
+        )
+        .gte("created_at", inicioMes)
+        .lt("created_at", inicioMesSeguinte)
+        .gt("valor", 0),
+    ]);
+    setRows((solicitacoesResult.data || []) as unknown as Solicitacao[]);
+    setCustosMensais(
+      ((custosResult.data || []) as unknown as DashboardMonthlyCost[]).filter(
+        (custo) => custo.solicitacao.status !== "cancelada",
+      ),
+    );
+    setLoading(false);
+  }, [mesReferencia]);
+  useEffect(() => {
+    void loadDashboard();
+  }, [loadDashboard]);
   useAutoFinalization(access.canViewAll, loadDashboard);
   const hoje = new Date();
   hoje.setHours(0, 0, 0, 0);
-  const mes = new Date().toISOString().slice(0, 7);
-  const compradas = rows.filter((r) => r.comprado_em?.startsWith(mes));
-  const solicitacoesImprevisto = rows.filter(
-    (r) =>
-      r.houve_imprevisto ||
-      (r.anexos || []).some(
-        (a) =>
-          (a.complementar || a.imprevisto) &&
-          (a.criado_em || a.created_at).startsWith(mes),
-      ),
+  const compradas = new Set(
+    custosMensais
+      .filter((custo) => custo.tipo === "passagem")
+      .map((custo) => custo.solicitacao_id),
   );
-  const custoImprevistos = solicitacoesImprevisto
-    .flatMap((r) =>
-      (r.anexos || []).filter(
-        (a) =>
-          (a.complementar || a.imprevisto) &&
-          (a.criado_em || a.created_at).startsWith(mes),
-      ),
-    )
-    .reduce((s, a) => s + Number(a.valor || 0), 0);
+  const custosImprevistos = custosMensais.filter((custo) => {
+    const descricao = custo.descricao?.toLocaleLowerCase("pt-BR") || "";
+    return (
+      custo.solicitacao.houve_imprevisto ||
+      descricao.includes("complementar") ||
+      descricao.includes("imprevisto") ||
+      custo.solicitacao.anexos?.some(
+        (anexo) => anexo.complementar || anexo.imprevisto,
+      )
+    );
+  });
   const abertas = rows.filter(
     (r) => !["passagem_comprada", "finalizada", "cancelada"].includes(r.status),
   );
@@ -269,13 +317,11 @@ export function Dashboard({ access }: { access: Access }) {
     return ida <= limite;
   });
   const alerta = (motivo: Motivo) => {
-    const itens = rows.filter(
-      (r) =>
-        r.motivo === motivo && !["finalizada", "cancelada"].includes(r.status),
+    const custos = custosMensais.filter(
+      (custo) => custo.solicitacao.motivo === motivo,
     );
-    const custo = itens
-      .flatMap((r) => r.custos || [])
-      .reduce((s, c) => s + Number(c.valor), 0);
+    const itens = uniqueMonthlyRequests(custos);
+    const custo = custos.reduce((s, item) => s + Number(item.valor), 0);
     return (
       <section className="card operational-alert">
         <div>
@@ -288,13 +334,18 @@ export function Dashboard({ access }: { access: Access }) {
               .slice(0, 3)
               .map((x) => x.funcionario?.nome)
               .filter(Boolean)
-              .join(", ") || "Nenhuma solicitação ativa"}
+              .join(", ") || "Nenhum custo no período"}
           </small>
         </div>
         <Link to={`/solicitacoes?motivo=${motivo}`}>Ver solicitações</Link>
       </section>
     );
   };
+  const solicitacoesImprevisto = uniqueMonthlyRequests(custosImprevistos);
+  const custoImprevistos = custosImprevistos.reduce(
+    (total, custo) => total + Number(custo.valor),
+    0,
+  );
   const alertaImprevistos = (
     <section className="card operational-alert">
       <div>
@@ -326,12 +377,33 @@ export function Dashboard({ access }: { access: Access }) {
       }
     >
       <EnvWarning />
+      <section className="card dashboard-period">
+        <label>
+          Mês de referência
+          <input
+            type="month"
+            value={mesReferencia}
+            onChange={(event) => {
+              if (event.target.value) setMesReferencia(event.target.value);
+            }}
+          />
+        </label>
+        <small>
+          Custos financeiros pela data de lançamento; fila operacional pelas
+          solicitações em aberto.
+        </small>
+      </section>
       {loading ? (
         <Spinner />
       ) : (
         <>
-          <div className="stats">
-            <Stat label="Solicitações abertas" value={abertas.length} />
+          <h2 className="dashboard-section-title">Visão operacional</h2>
+          <div className="stats dashboard-operational-stats">
+            <Stat
+              label="Solicitações abertas"
+              value={abertas.length}
+              detail="Situação atual"
+            />
             <Stat
               label="Aguardando compra"
               value={
@@ -339,9 +411,21 @@ export function Dashboard({ access }: { access: Access }) {
                   ["em_analise", "em_andamento"].includes(r.status),
                 ).length
               }
+              detail="Situação atual"
             />
-            <Stat label="Solicitações atrasadas" value={atrasadas.length} />
-            <Stat label="Compradas no mês" value={compradas.length} />
+            <Stat
+              label="Solicitações atrasadas"
+              value={atrasadas.length}
+              detail="Situação atual"
+            />
+          </div>
+          <h2 className="dashboard-section-title">Visão financeira mensal</h2>
+          <div className="stats dashboard-financial-stats">
+            <Stat
+              label="Compradas no mês"
+              value={compradas.size}
+              detail="Mês selecionado"
+            />
           </div>
           <div className="operational-alerts">
             {alerta("desligamento")}
@@ -377,16 +461,18 @@ function Stat({
   label,
   value,
   money,
+  detail = "Período atual",
 }: {
   label: string;
   value: string | number;
   money?: boolean;
+  detail?: string;
 }) {
   return (
     <div className="stat">
       <span>{label}</span>
       <strong className={money ? "money" : ""}>{value}</strong>
-      <small>Período atual</small>
+      <small>{detail}</small>
     </div>
   );
 }
@@ -1483,7 +1569,6 @@ function Compra({
       current.map((pdf) => (pdf.id === id ? { ...pdf, ...patch } : pdf)),
     );
   };
-
   async function lerPdf(draft: PdfDraft) {
     try {
       const extracted = await extractTicketDataFromPdf(draft.file);
