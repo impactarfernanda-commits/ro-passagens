@@ -17,6 +17,23 @@ type LinhaRelatorio = Obra & {
   valor_total: number;
   valor_complementar: number;
 };
+type CustoRelatorio = {
+  solicitacao_id: string;
+  centro_custo_id: string | null;
+  tipo: "passagem" | "uber" | "refeicao" | "outros";
+  descricao: string | null;
+  valor: number;
+  created_at: string;
+  solicitacao: {
+    id: string;
+    obra_id: string | null;
+    status: string;
+    motivo: string | null;
+    responsavel_ro_id: string | null;
+    houve_imprevisto: boolean | null;
+    anexos?: Array<{ complementar: boolean; imprevisto: boolean }>;
+  };
+};
 type Resumo = {
   solicitacoes: number; compradas: number; abertas: number;
   imprevistos: number; valor_total: number; valor_complementar: number;
@@ -27,7 +44,13 @@ type RelatorioData = {
   responsaveis: Array<{ id: string; nome: string }>;
   resumo: Resumo;
 };
-type SortKey = "codigo" | "nome" | "solicitacoes" | "valor_total";
+type SortKey =
+  | "codigo"
+  | "nome"
+  | "compradas"
+  | "abertas"
+  | "imprevistos"
+  | "valor_total";
 
 const hoje = new Date().toISOString().slice(0, 10);
 const inicioMes = `${hoje.slice(0, 8)}01`;
@@ -40,6 +63,7 @@ export function Relatorios() {
   const [filtros, setFiltros] = useState({ inicio: inicioMes, fim: hoje, centro: "", status: "", motivo: "", responsavel: "" });
   const [aplicados, setAplicados] = useState(filtros);
   const [dados, setDados] = useState<RelatorioData>(vazio);
+  const [custos, setCustos] = useState<CustoRelatorio[]>([]);
   const [loading, setLoading] = useState(true);
   const [erro, setErro] = useState("");
   const [ordem, setOrdem] = useState<SortKey>("codigo");
@@ -48,37 +72,170 @@ export function Relatorios() {
   const carregar = useCallback(async () => {
     setLoading(true); setErro("");
     const semCentro = aplicados.centro === "sem-centro";
-    const { data, error } = await supabase.rpc("ro_relatorio_centros_custo", {
-      p_inicio: aplicados.inicio || null,
-      p_fim: aplicados.fim || null,
-      p_centro_custo_id: semCentro || !aplicados.centro ? null : aplicados.centro,
-      p_sem_centro: semCentro,
-      p_status: aplicados.status || null,
-      p_motivo: aplicados.motivo || null,
-      p_responsavel_ro_id: aplicados.responsavel || null,
-    });
+    const inicio = aplicados.inicio
+      ? new Date(`${aplicados.inicio}T00:00:00`).toISOString()
+      : null;
+    const fimExclusivo = aplicados.fim
+      ? (() => {
+          const data = new Date(`${aplicados.fim}T00:00:00`);
+          data.setDate(data.getDate() + 1);
+          return data.toISOString();
+        })()
+      : null;
+    let custosQuery = supabase
+      .from("ro_passagem_custos")
+      .select(
+        "solicitacao_id,centro_custo_id,tipo,descricao,valor,created_at,solicitacao:ro_passagem_solicitacoes!inner(id,obra_id,status,motivo,responsavel_ro_id,houve_imprevisto,anexos:ro_passagem_anexos(complementar,imprevisto))",
+      )
+      .gt("valor", 0);
+    if (inicio) custosQuery = custosQuery.gte("created_at", inicio);
+    if (fimExclusivo) custosQuery = custosQuery.lt("created_at", fimExclusivo);
+    const [relatorioResult, custosResult] = await Promise.all([
+      supabase.rpc("ro_relatorio_centros_custo", {
+        p_inicio: aplicados.inicio || null,
+        p_fim: aplicados.fim || null,
+        p_centro_custo_id:
+          semCentro || !aplicados.centro ? null : aplicados.centro,
+        p_sem_centro: semCentro,
+        p_status: aplicados.status || null,
+        p_motivo: aplicados.motivo || null,
+        p_responsavel_ro_id: aplicados.responsavel || null,
+      }),
+      custosQuery,
+    ]);
+    const { data, error } = relatorioResult;
     if (error) setErro(error.message);
     else setDados((data || vazio) as unknown as RelatorioData);
+    if (custosResult.error)
+      setErro((atual) => atual || custosResult.error?.message || "");
+    else
+      setCustos(
+        (custosResult.data || []) as unknown as CustoRelatorio[],
+      );
     setLoading(false);
   }, [aplicados]);
   useAutoFinalization(true, carregar);
   useEffect(() => { void carregar(); }, [carregar]);
 
-  const linhas = useMemo(() => [...dados.linhas].sort((a, b) => {
+  const custosFiltrados = useMemo(() => custos.filter((custo) => {
+    const solicitacao = custo.solicitacao;
+    const centroCusto = custo.centro_custo_id || solicitacao.obra_id;
+    return solicitacao.status !== "cancelada" &&
+      (!aplicados.status || solicitacao.status === aplicados.status) &&
+      (!aplicados.motivo || solicitacao.motivo === aplicados.motivo) &&
+      (!aplicados.responsavel ||
+        solicitacao.responsavel_ro_id === aplicados.responsavel) &&
+      (!aplicados.centro ||
+        (aplicados.centro === "sem-centro"
+          ? !centroCusto
+          : centroCusto === aplicados.centro));
+  }), [aplicados, custos]);
+
+  const metricasFinanceiras = useMemo(() => {
+    const porCentro = new Map<
+      string,
+      {
+        compradas: Set<string>;
+        imprevistos: Set<string>;
+        valorTotal: number;
+      }
+    >();
+    for (const custo of custosFiltrados) {
+      const centro =
+        custo.centro_custo_id || custo.solicitacao.obra_id || "sem-centro";
+      const metrica = porCentro.get(centro) || {
+        compradas: new Set<string>(),
+        imprevistos: new Set<string>(),
+        valorTotal: 0,
+      };
+      metrica.valorTotal += Number(custo.valor);
+      if (custo.tipo === "passagem")
+        metrica.compradas.add(custo.solicitacao_id);
+      const descricao = custo.descricao?.toLocaleLowerCase("pt-BR") || "";
+      if (
+        custo.solicitacao.houve_imprevisto ||
+        descricao.includes("complementar") ||
+        descricao.includes("imprevisto") ||
+        custo.solicitacao.anexos?.some(
+          (anexo) => anexo.complementar || anexo.imprevisto,
+        )
+      )
+        metrica.imprevistos.add(custo.solicitacao_id);
+      porCentro.set(centro, metrica);
+    }
+    return porCentro;
+  }, [custosFiltrados]);
+
+  const linhasCalculadas = useMemo(() => {
+    const operacionais = new Map(
+      dados.linhas.map((linha) => [
+        linha.centro_custo_id || "sem-centro",
+        linha,
+      ]),
+    );
+    const centros = new Set([
+      ...operacionais.keys(),
+      ...metricasFinanceiras.keys(),
+    ]);
+    return [...centros].map((centro) => {
+      const operacional = operacionais.get(centro);
+      const obra = dados.centros.find((item) => item.id === centro);
+      const financeira = metricasFinanceiras.get(centro);
+      return {
+        ...(obra || {}),
+        ...(operacional || {}),
+        centro_custo_id: centro === "sem-centro" ? null : centro,
+        compradas: financeira?.compradas.size || 0,
+        abertas: operacional?.abertas || 0,
+        imprevistos: financeira?.imprevistos.size || 0,
+        valor_total: financeira?.valorTotal || 0,
+      } as LinhaRelatorio;
+    });
+  }, [dados.centros, dados.linhas, metricasFinanceiras]);
+
+  const linhas = useMemo(() => [...linhasCalculadas].sort((a, b) => {
     const factor = direcao === "asc" ? 1 : -1;
-    if (ordem === "solicitacoes" || ordem === "valor_total") return (Number(a[ordem]) - Number(b[ordem])) * factor;
+    if (["compradas", "abertas", "imprevistos", "valor_total"].includes(ordem))
+      return (Number(a[ordem]) - Number(b[ordem])) * factor;
     const av = ordem === "codigo" ? (a.codigo || "ZZZZ") : (a.nome || a.descricao || "SEM CENTRO DE CUSTO");
     const bv = ordem === "codigo" ? (b.codigo || "ZZZZ") : (b.nome || b.descricao || "SEM CENTRO DE CUSTO");
     return av.localeCompare(bv, "pt-BR", { sensitivity: "base", numeric: true }) * factor;
-  }), [dados.linhas, direcao, ordem]);
+  }), [direcao, linhasCalculadas, ordem]);
+  const resumoFinanceiro = useMemo(() => ({
+    compradas: new Set(
+      custosFiltrados
+        .filter((custo) => custo.tipo === "passagem")
+        .map((custo) => custo.solicitacao_id),
+    ).size,
+    imprevistos: new Set(
+      custosFiltrados
+        .filter((custo) => {
+          const descricao =
+            custo.descricao?.toLocaleLowerCase("pt-BR") || "";
+          return (
+            custo.solicitacao.houve_imprevisto ||
+            descricao.includes("complementar") ||
+            descricao.includes("imprevisto") ||
+            custo.solicitacao.anexos?.some(
+              (anexo) => anexo.complementar || anexo.imprevisto,
+            )
+          );
+        })
+        .map((custo) => custo.solicitacao_id),
+    ).size,
+    valorTotal: custosFiltrados.reduce(
+      (total, custo) => total + Number(custo.valor),
+      0,
+    ),
+  }), [custosFiltrados]);
 
   function label(linha: LinhaRelatorio) {
     return linha.centro_custo_id ? formatCentroCustoLabel(linha) : "SEM CENTRO DE CUSTO";
   }
   function exportarCsv() {
-    const cabecalho = ["Centro de custo","Solicitações","Compradas","Em aberto","Aguardando compra","Atrasadas","Imprevistos/complementares","Valor complementar","Valor total"];
+    const cabecalho = ["Centro de custo","Compradas","Em aberto","Imprevistos/complementares","Valor total"];
     const escape = (value: string | number) => `"${String(value).replaceAll('"', '""')}"`;
-    const registros = linhas.map((linha) => [label(linha),linha.solicitacoes,linha.compradas,linha.abertas,linha.aguardando_compra,linha.atrasadas,linha.imprevistos,Number(linha.valor_complementar).toFixed(2),Number(linha.valor_total).toFixed(2)]);
+    const registros = linhas.map((linha) => [label(linha),linha.compradas,linha.abertas,linha.imprevistos,Number(linha.valor_total).toFixed(2)]);
     const csv = `\uFEFF${[cabecalho, ...registros].map((row) => row.map(escape).join(";")).join("\r\n")}`;
     const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
     const link = document.createElement("a"); link.href = url; link.download = `relatorio-centros-custo-${hoje}.csv`; link.click();
@@ -98,9 +255,9 @@ export function Relatorios() {
     </form>
     {erro && <div className="error">{erro}</div>}
     {loading ? <Spinner/> : <>
-      <div className="stats report-stats"><ReportStat label="Total de solicitações" value={dados.resumo.solicitacoes}/><ReportStat label="Total comprado" value={dados.resumo.compradas}/><ReportStat label="Total em aberto" value={dados.resumo.abertas}/><ReportStat label="Imprevistos/complementares" value={dados.resumo.imprevistos}/><ReportStat label="Valor total geral" value={dinheiro(Number(dados.resumo.valor_total))}/></div>
-      <div className="report-sort"><label>Ordenar por <select value={ordem} onChange={(e) => setOrdem(e.target.value as SortKey)}><option value="codigo">Código</option><option value="nome">Nome</option><option value="solicitacoes">Quantidade</option><option value="valor_total">Valor total</option></select></label><button className="btn secondary" type="button" onClick={() => setDirecao(direcao === "asc" ? "desc" : "asc")}>{direcao === "asc" ? "Crescente" : "Decrescente"}</button></div>
-      <section className="card table-card">{!linhas.length ? <Empty text="Nenhum resultado para os filtros aplicados."/> : <table><thead><tr><th>Centro de custo</th><th>Solicitações</th><th>Compradas</th><th>Em aberto</th><th>Aguardando</th><th>Atrasadas</th><th>Imprevistos</th><th>Valor complementar</th><th>Valor total</th></tr></thead><tbody>{linhas.map((linha) => <tr key={linha.centro_custo_id || "sem-centro"}><td><strong>{label(linha)}</strong></td><td>{linha.solicitacoes}</td><td>{linha.compradas}</td><td>{linha.abertas}</td><td>{linha.aguardando_compra}</td><td>{linha.atrasadas}</td><td>{linha.imprevistos}</td><td>{dinheiro(Number(linha.valor_complementar))}</td><td><strong>{dinheiro(Number(linha.valor_total))}</strong></td></tr>)}</tbody></table>}</section>
+      <div className="stats report-stats"><ReportStat label="Total de solicitações" value={dados.resumo.solicitacoes}/><ReportStat label="Total comprado" value={resumoFinanceiro.compradas}/><ReportStat label="Total em aberto" value={dados.resumo.abertas}/><ReportStat label="Imprevistos/complementares" value={resumoFinanceiro.imprevistos}/><ReportStat label="Valor total geral" value={dinheiro(resumoFinanceiro.valorTotal)}/></div>
+      <div className="report-sort"><label>Ordenar por <select value={ordem} onChange={(e) => setOrdem(e.target.value as SortKey)}><option value="codigo">Código</option><option value="nome">Centro de custo</option><option value="compradas">Compradas</option><option value="abertas">Em aberto</option><option value="imprevistos">Imprevistos/complementares</option><option value="valor_total">Valor total</option></select></label><button className="btn secondary" type="button" onClick={() => setDirecao(direcao === "asc" ? "desc" : "asc")}>{direcao === "asc" ? "Crescente" : "Decrescente"}</button></div>
+      <section className="card table-card">{!linhas.length ? <Empty text="Nenhum resultado para os filtros aplicados."/> : <table><thead><tr><th>Centro de custo</th><th>Compradas</th><th>Em aberto</th><th>Imprevistos/complementares</th><th>Valor total</th></tr></thead><tbody>{linhas.map((linha) => <tr key={linha.centro_custo_id || "sem-centro"}><td><strong>{label(linha)}</strong></td><td>{linha.compradas}</td><td>{linha.abertas}</td><td>{linha.imprevistos}</td><td><strong>{dinheiro(Number(linha.valor_total))}</strong></td></tr>)}</tbody></table>}</section>
     </>}
   </Page>;
 }
