@@ -1181,13 +1181,6 @@ function Assumir({ row, onDone }: { row: Solicitacao; onDone: () => void }) {
 function Operacoes({ row, onDone }: { row: Solicitacao; onDone: () => void }) {
   const [busy, setBusy] = useState(false);
   const [erro, setErro] = useState("");
-  const [finalizar, setFinalizar] = useState(false);
-  const [form, setForm] = useState({
-    chegou_ao_destino: true,
-    data_chegada_confirmada: new Date().toISOString().slice(0, 10),
-    houve_imprevisto: false,
-    observacao_finalizacao: "",
-  });
   async function andamento() {
     setBusy(true);
     const { error } = await supabase.rpc("ro_alterar_status", {
@@ -1209,29 +1202,6 @@ function Operacoes({ row, onDone }: { row: Solicitacao; onDone: () => void }) {
     setBusy(false);
     if (!error) onDone();
   }
-  async function concluir(e: React.FormEvent) {
-    e.preventDefault();
-    if (
-      (form.houve_imprevisto || !form.chegou_ao_destino) &&
-      !form.observacao_finalizacao.trim()
-    ) {
-      setErro(
-        "A observação é obrigatória quando houve imprevisto ou a pessoa não chegou ao destino.",
-      );
-      return;
-    }
-    setBusy(true);
-    const { error } = await supabase.rpc("ro_finalizar_solicitacao", {
-      p_solicitacao_id: row.id,
-      p_chegou_ao_destino: form.chegou_ao_destino,
-      p_data_chegada_confirmada: form.data_chegada_confirmada,
-      p_houve_imprevisto: form.houve_imprevisto,
-      p_observacao_finalizacao: form.observacao_finalizacao,
-    });
-    setErro(error?.message || "");
-    setBusy(false);
-    if (!error) onDone();
-  }
   if (["finalizada", "cancelada"].includes(row.status)) return null;
   return (
     <section className="card operations">
@@ -1246,65 +1216,7 @@ function Operacoes({ row, onDone }: { row: Solicitacao; onDone: () => void }) {
         <button className="btn danger" disabled={busy} onClick={cancelar}>
           Cancelar solicitação
         </button>
-        {row.status === "passagem_comprada" && (
-          <button
-            className="btn primary"
-            disabled={busy}
-            onClick={() => setFinalizar(!finalizar)}
-          >
-            Finalizar
-          </button>
-        )}
       </div>
-      {finalizar && (
-        <form className="form finish-form" onSubmit={concluir}>
-          <label className="checkbox">
-            <input
-              type="checkbox"
-              checked={form.chegou_ao_destino}
-              onChange={(e) =>
-                setForm({ ...form, chegou_ao_destino: e.target.checked })
-              }
-            />{" "}
-            Chegou ao destino
-          </label>
-          <label>
-            Data de chegada confirmada *
-            <input
-              type="date"
-              required
-              value={form.data_chegada_confirmada}
-              onChange={(e) =>
-                setForm({ ...form, data_chegada_confirmada: e.target.value })
-              }
-            />
-          </label>
-          <label className="checkbox">
-            <input
-              type="checkbox"
-              checked={form.houve_imprevisto}
-              onChange={(e) =>
-                setForm({ ...form, houve_imprevisto: e.target.checked })
-              }
-            />{" "}
-            Houve imprevisto
-          </label>
-          <label className="wide">
-            Observação de finalização
-            {(form.houve_imprevisto || !form.chegou_ao_destino) && " *"}
-            <textarea
-              required={form.houve_imprevisto || !form.chegou_ao_destino}
-              value={form.observacao_finalizacao}
-              onChange={(e) =>
-                setForm({ ...form, observacao_finalizacao: e.target.value })
-              }
-            />
-          </label>
-          <button className="btn primary wide" disabled={busy}>
-            Confirmar finalização
-          </button>
-        </form>
-      )}
     </section>
   );
 }
