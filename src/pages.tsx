@@ -236,6 +236,18 @@ type DashboardMonthlyCost = {
     anexos?: Array<Pick<Anexo, "complementar" | "imprevisto">>;
   };
 };
+type DashboardCardKey =
+  | "abertas"
+  | "atrasadas"
+  | "compradas"
+  | "desligamento"
+  | "transferencia"
+  | "imprevistos";
+type DashboardDetailEntry = {
+  solicitacao: Solicitacao;
+  valor: number;
+  observacao?: string;
+};
 
 function uniqueMonthlyRequests(custos: DashboardMonthlyCost[]) {
   return [
@@ -255,6 +267,8 @@ export function Dashboard({ access }: { access: Access }) {
     () =>
       `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, "0")}`,
   );
+  const [cardSelecionado, setCardSelecionado] =
+    useState<DashboardCardKey>();
   const [loading, setLoading] = useState(true);
   const loadDashboard = useCallback(async () => {
     setLoading(true);
@@ -323,7 +337,15 @@ export function Dashboard({ access }: { access: Access }) {
     const itens = uniqueMonthlyRequests(custos);
     const custo = custos.reduce((s, item) => s + Number(item.valor), 0);
     return (
-      <section className="card operational-alert">
+      <button
+        className="card operational-alert dashboard-alert-button"
+        type="button"
+        onClick={() =>
+          setCardSelecionado(
+            motivo === "desligamento" ? "desligamento" : "transferencia",
+          )
+        }
+      >
         <div>
           <strong>{motivoLabel[motivo]}</strong>
           <span>
@@ -337,8 +359,8 @@ export function Dashboard({ access }: { access: Access }) {
               .join(", ") || "Nenhum custo no período"}
           </small>
         </div>
-        <Link to={`/solicitacoes?motivo=${motivo}`}>Ver solicitações</Link>
-      </section>
+        <span className="dashboard-card-action">Ver solicitações</span>
+      </button>
     );
   };
   const solicitacoesImprevisto = uniqueMonthlyRequests(custosImprevistos);
@@ -347,7 +369,11 @@ export function Dashboard({ access }: { access: Access }) {
     0,
   );
   const alertaImprevistos = (
-    <section className="card operational-alert">
+    <button
+      className="card operational-alert dashboard-alert-button"
+      type="button"
+      onClick={() => setCardSelecionado("imprevistos")}
+    >
       <div>
         <strong>Imprevistos com passagens</strong>
         <span>
@@ -362,9 +388,90 @@ export function Dashboard({ access }: { access: Access }) {
             .join(", ") || "Nenhum imprevisto no período"}
         </small>
       </div>
-      <Link to="/solicitacoes?imprevisto=true">Ver solicitações</Link>
-    </section>
+      <span className="dashboard-card-action">Ver solicitações</span>
+    </button>
   );
+  const consolidarFinanceiro = (
+    custos: DashboardMonthlyCost[],
+  ): DashboardDetailEntry[] => {
+    const porSolicitacao = new Map<string, DashboardDetailEntry>();
+    for (const custo of custos) {
+      const solicitacao = rows.find((row) => row.id === custo.solicitacao_id);
+      if (!solicitacao) continue;
+      const atual = porSolicitacao.get(solicitacao.id) || {
+        solicitacao,
+        valor: 0,
+      };
+      atual.valor += Number(custo.valor);
+      porSolicitacao.set(solicitacao.id, atual);
+    }
+    return [...porSolicitacao.values()];
+  };
+  const consolidarOperacional = (
+    solicitacoes: Solicitacao[],
+    atraso = false,
+  ): DashboardDetailEntry[] =>
+    solicitacoes.map((solicitacao) => ({
+      solicitacao,
+      valor: (solicitacao.custos || []).reduce(
+        (total, custo) => total + Number(custo.valor),
+        0,
+      ),
+      ...(atraso && {
+        observacao: `Ida prevista: ${data(solicitacao.data_ida)}`,
+      }),
+    }));
+  const custosCompradas = custosMensais.filter((custo) =>
+    compradas.has(custo.solicitacao_id),
+  );
+  const custosDesligamento = custosMensais.filter(
+    (custo) => custo.solicitacao.motivo === "desligamento",
+  );
+  const custosTransferencia = custosMensais.filter(
+    (custo) => custo.solicitacao.motivo === "transferencia_obra",
+  );
+  const mesReferenciaLabel = new Intl.DateTimeFormat("pt-BR", {
+    month: "long",
+    year: "numeric",
+  }).format(new Date(`${mesReferencia}-01T12:00:00`));
+  const detalhesPorCard: Record<
+    DashboardCardKey,
+    { titulo: string; contexto: string; itens: DashboardDetailEntry[] }
+  > = {
+    abertas: {
+      titulo: "Solicitações em aberto",
+      contexto: "Situação operacional atual",
+      itens: consolidarOperacional(abertas),
+    },
+    atrasadas: {
+      titulo: "Solicitações atrasadas",
+      contexto: "Situação operacional atual",
+      itens: consolidarOperacional(atrasadas, true),
+    },
+    compradas: {
+      titulo: "Compradas no mês",
+      contexto: `Mês de referência: ${mesReferenciaLabel}`,
+      itens: consolidarFinanceiro(custosCompradas),
+    },
+    desligamento: {
+      titulo: "Desligamento",
+      contexto: `Mês de referência: ${mesReferenciaLabel}`,
+      itens: consolidarFinanceiro(custosDesligamento),
+    },
+    transferencia: {
+      titulo: "Transferência de obra",
+      contexto: `Mês de referência: ${mesReferenciaLabel}`,
+      itens: consolidarFinanceiro(custosTransferencia),
+    },
+    imprevistos: {
+      titulo: "Imprevistos com passagens",
+      contexto: `Mês de referência: ${mesReferenciaLabel}`,
+      itens: consolidarFinanceiro(custosImprevistos),
+    },
+  };
+  const detalheCard = cardSelecionado
+    ? detalhesPorCard[cardSelecionado]
+    : null;
   return (
     <Page
       title="Painel"
@@ -384,7 +491,10 @@ export function Dashboard({ access }: { access: Access }) {
             type="month"
             value={mesReferencia}
             onChange={(event) => {
-              if (event.target.value) setMesReferencia(event.target.value);
+              if (event.target.value) {
+                setMesReferencia(event.target.value);
+                setCardSelecionado(undefined);
+              }
             }}
           />
         </label>
@@ -400,23 +510,16 @@ export function Dashboard({ access }: { access: Access }) {
           <h2 className="dashboard-section-title">Visão operacional</h2>
           <div className="stats dashboard-operational-stats">
             <Stat
-              label="Solicitações abertas"
+              label="Solicitações em aberto"
               value={abertas.length}
               detail="Situação atual"
-            />
-            <Stat
-              label="Aguardando compra"
-              value={
-                rows.filter((r) =>
-                  ["em_analise", "em_andamento"].includes(r.status),
-                ).length
-              }
-              detail="Situação atual"
+              onClick={() => setCardSelecionado("abertas")}
             />
             <Stat
               label="Solicitações atrasadas"
               value={atrasadas.length}
               detail="Situação atual"
+              onClick={() => setCardSelecionado("atrasadas")}
             />
           </div>
           <h2 className="dashboard-section-title">Visão financeira mensal</h2>
@@ -425,6 +528,7 @@ export function Dashboard({ access }: { access: Access }) {
               label="Compradas no mês"
               value={compradas.size}
               detail="Mês selecionado"
+              onClick={() => setCardSelecionado("compradas")}
             />
           </div>
           <div className="operational-alerts">
@@ -454,6 +558,87 @@ export function Dashboard({ access }: { access: Access }) {
           </section>
         </>
       )}
+      {detalheCard && (
+        <div
+          className="dashboard-detail-backdrop"
+          role="presentation"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget)
+              setCardSelecionado(undefined);
+          }}
+        >
+          <section
+            className="dashboard-detail-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="dashboard-detail-title"
+          >
+            <div className="dashboard-detail-head">
+              <div>
+                <h2 id="dashboard-detail-title">{detalheCard.titulo}</h2>
+                <small>{detalheCard.contexto}</small>
+              </div>
+              <button
+                className="btn secondary"
+                type="button"
+                onClick={() => setCardSelecionado(undefined)}
+              >
+                Fechar
+              </button>
+            </div>
+            {!detalheCard.itens.length ? (
+              <Empty text="Nenhuma solicitação encontrada para este indicador." />
+            ) : (
+              <div className="dashboard-detail-table">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Funcionário</th>
+                      <th>Centro de custo</th>
+                      <th>Motivo</th>
+                      <th>Status</th>
+                      <th>Data da solicitação</th>
+                      <th>Valor</th>
+                      <th>Observação</th>
+                      <th>Ação</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {detalheCard.itens.map((item) => (
+                      <tr key={item.solicitacao.id}>
+                        <td>
+                          {item.solicitacao.funcionario?.nome ||
+                            "Não identificado"}
+                        </td>
+                        <td>
+                          {formatCentroCustoLabel(item.solicitacao.obra)}
+                        </td>
+                        <td>
+                          {formatMotivoLabel(item.solicitacao.motivo)}
+                        </td>
+                        <td>{statusLabel[item.solicitacao.status]}</td>
+                        <td>{dataHora(item.solicitacao.created_at)}</td>
+                        <td>
+                          <strong>{dinheiro(item.valor)}</strong>
+                        </td>
+                        <td>{item.observacao || "—"}</td>
+                        <td>
+                          <Link
+                            className="btn secondary"
+                            to={`/solicitacoes/${item.solicitacao.id}`}
+                          >
+                            Abrir solicitação
+                          </Link>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </section>
+        </div>
+      )}
     </Page>
   );
 }
@@ -462,18 +647,28 @@ function Stat({
   value,
   money,
   detail = "Período atual",
+  onClick,
 }: {
   label: string;
   value: string | number;
   money?: boolean;
   detail?: string;
+  onClick?: () => void;
 }) {
-  return (
-    <div className="stat">
+  const content = (
+    <>
       <span>{label}</span>
       <strong className={money ? "money" : ""}>{value}</strong>
       <small>{detail}</small>
-    </div>
+      {onClick && <small className="dashboard-card-action">Ver solicitações</small>}
+    </>
+  );
+  return onClick ? (
+    <button className="stat dashboard-stat-button" type="button" onClick={onClick}>
+      {content}
+    </button>
+  ) : (
+    <div className="stat">{content}</div>
   );
 }
 export function Solicitacoes({
