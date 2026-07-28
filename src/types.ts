@@ -70,6 +70,7 @@ export type Anexo = {
   imprevisto: boolean;
   motivo_complementar: string | null;
   criado_por: string | null;
+  uploaded_by: string | null;
   criado_em: string;
   created_at: string;
 };

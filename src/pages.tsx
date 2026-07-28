@@ -890,6 +890,9 @@ export function Solicitacoes({
                         {userLabels[r.solicitante_id] ||
                           "Solicitante sem identificação"}
                       </strong>
+                      {r.created_at && (
+                        <small>Solicitada em {dataHora(r.created_at)}</small>
+                      )}
                     </td>
                     {access.canViewAll && (
                       <td>
@@ -1256,10 +1259,12 @@ export function Detalhe({ access }: { access: Access }) {
           const responsavelId = (found as { responsavel_ro_id?: string | null })
             .responsavel_ro_id;
           const anexos = (found.anexos || []) as Anexo[];
+          const criadorAnexoId = (anexo: Anexo) =>
+            anexo.criado_por || anexo.uploaded_by;
           const ids = [
             found.solicitante_id,
             responsavelId,
-            ...anexos.map((a) => a.criado_por),
+            ...anexos.map(criadorAnexoId),
           ].filter(Boolean) as string[];
           const { data: labels } = await supabase.rpc("ro_user_labels", {
             p_user_ids: ids,
@@ -1283,9 +1288,12 @@ export function Detalhe({ access }: { access: Access }) {
               : null,
             anexos: anexos.map((a) => ({
               ...a,
-              criado_por_nome: a.criado_por
-                ? labelMap.get(a.criado_por) || "Responsável sem identificação"
-                : null,
+              criado_por_nome:
+                (criadorAnexoId(a)
+                  ? labelMap.get(criadorAnexoId(a) as string)
+                  : null) ||
+                (responsavelId ? labelMap.get(responsavelId) : null) ||
+                null,
             })),
           } as unknown as Solicitacao);
         } else setRow(null);
