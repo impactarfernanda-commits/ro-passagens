@@ -1394,7 +1394,11 @@ export function Detalhe({ access }: { access: Access }) {
       {access.canOperateRO && row.status === "passagem_comprada" && (
         <Compra row={row} onDone={load} complementar />
       )}
-      <PassagemComprada anexos={row.anexos || []} custos={row.custos || []} />
+      <PassagemComprada
+        anexos={row.anexos || []}
+        custos={row.custos || []}
+        canViewCosts={canViewFinancialCosts(access)}
+      />
       <div className="grid two detail">
         <section className="card">
           <h2>Notificações</h2>
@@ -1517,12 +1521,17 @@ function DT({ t, v }: { t: string; v?: string | null }) {
     </div>
   );
 }
+function canViewFinancialCosts(access: Access) {
+  return access.canViewAll;
+}
 function PassagemComprada({
   anexos,
   custos,
+  canViewCosts,
 }: {
   anexos: Anexo[];
   custos: Custo[];
+  canViewCosts: boolean;
 }) {
   const [erro, setErro] = useState("");
   async function abrir(anexo: Anexo) {
@@ -1567,11 +1576,15 @@ function PassagemComprada({
         <FileText />
         <div>
           <h2>Passagem comprada</h2>
-          <p>PDFs e custos registrados em modo leitura.</p>
+          <p>
+            {canViewCosts
+              ? "PDFs e custos registrados em modo leitura."
+              : "Documentos registrados para consulta."}
+          </p>
         </div>
       </div>
       {erro && <div className="error">{erro}</div>}
-      {complementares.length > 0 && (
+      {canViewCosts && complementares.length > 0 && (
         <div className="complementary-summary">
           <strong>Imprevistos com passagens</strong>
           <span>
@@ -1580,28 +1593,32 @@ function PassagemComprada({
           </span>
         </div>
       )}
-      <section className="financial-costs">
-        <h3>Custos financeiros</h3>
-        {custos.length === 0 ? (
-          <p className="attachment-empty">Nenhum custo financeiro registrado.</p>
-        ) : (
-          <div className="financial-cost-list">
-            {custos.map((custo) => (
-              <div key={custo.id}>
-                <span>
-                  <strong>{custoLabel(custo)}</strong>
-                  <small>
-                    {custo.tipo === "passagem"
-                      ? "Passagem comprada"
-                      : "Custo adicional"}
-                  </small>
-                </span>
-                <strong>{dinheiro(Number(custo.valor))}</strong>
-              </div>
-            ))}
-          </div>
-        )}
-      </section>
+      {canViewCosts && (
+        <section className="financial-costs">
+          <h3>Custos financeiros</h3>
+          {custos.length === 0 ? (
+            <p className="attachment-empty">
+              Nenhum custo financeiro registrado.
+            </p>
+          ) : (
+            <div className="financial-cost-list">
+              {custos.map((custo) => (
+                <div key={custo.id}>
+                  <span>
+                    <strong>{custoLabel(custo)}</strong>
+                    <small>
+                      {custo.tipo === "passagem"
+                        ? "Passagem comprada"
+                        : "Custo adicional"}
+                    </small>
+                  </span>
+                  <strong>{dinheiro(Number(custo.valor))}</strong>
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
+      )}
       <h3 className="documents-heading">Documentos anexados</h3>
       {anexos.length === 0 ? (
         <p className="attachment-empty">Nenhum PDF anexado.</p>
@@ -1650,28 +1667,30 @@ function PassagemComprada({
           ))}
         </div>
       )}
-      <div className="purchase-summary">
-        <div>
-          <span>Passagens</span>
-          <strong>{dinheiro(totalPassagens)}</strong>
+      {canViewCosts && (
+        <div className="purchase-summary">
+          <div>
+            <span>Passagens</span>
+            <strong>{dinheiro(totalPassagens)}</strong>
+          </div>
+          <div>
+            <span>Uber/local</span>
+            <strong>{dinheiro(uber)}</strong>
+          </div>
+          <div>
+            <span>Refeição/ajuda</span>
+            <strong>{dinheiro(refeicao)}</strong>
+          </div>
+          <div>
+            <span>Outros</span>
+            <strong>{dinheiro(outros)}</strong>
+          </div>
+          <div className="grand-total">
+            <span>Total geral</span>
+            <strong>{dinheiro(totalGeral)}</strong>
+          </div>
         </div>
-        <div>
-          <span>Uber/local</span>
-          <strong>{dinheiro(uber)}</strong>
-        </div>
-        <div>
-          <span>Refeição/ajuda</span>
-          <strong>{dinheiro(refeicao)}</strong>
-        </div>
-        <div>
-          <span>Outros</span>
-          <strong>{dinheiro(outros)}</strong>
-        </div>
-        <div className="grand-total">
-          <span>Total geral</span>
-          <strong>{dinheiro(totalGeral)}</strong>
-        </div>
-      </div>
+      )}
     </section>
   );
 }
