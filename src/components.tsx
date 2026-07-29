@@ -2,6 +2,7 @@ import {
   Bell,
   BarChart3,
   FileSpreadsheet,
+  House,
   LayoutDashboard,
   ListChecks,
   LogOut,
@@ -59,7 +60,6 @@ export function Sidebar({
   canImport: boolean;
 }) {
   const links = [
-    ["/", "Portal", LayoutDashboard],
     ["/painel", "Painel", LayoutDashboard],
     ["/solicitacoes", "Solicitações", ListChecks],
     ["/nova", "Nova solicitação", Plus],
@@ -108,6 +108,10 @@ export function Sidebar({
           )}
         </nav>
         <div className="side-foot">
+          <NavLink end to="/" onClick={onClose}>
+            <House size={18} />
+            Portal Tanks BR
+          </NavLink>
           <button onClick={onLogout}>
             <LogOut size={18} />
             Sair
