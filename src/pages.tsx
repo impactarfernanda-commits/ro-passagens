@@ -38,6 +38,7 @@ import {
 import { validatePdfFile } from "./pdfFileValidation";
 import { extractTicketDataFromPdf } from "./pdfPassagem";
 import { calcularCustosSemDuplicidade } from "./passagemGrouping";
+import { deduplicateNotifications } from "./notifications";
 import { buildPurchaseCosts, totalTicketValues } from "./purchaseCosts";
 import { supabase } from "./supabase";
 import type {
@@ -1406,7 +1407,7 @@ export function Detalhe({ access }: { access: Access }) {
             <Empty />
           ) : (
             <div className="timeline">
-              {row.notificacoes.map((n) => (
+              {deduplicateNotifications(row.notificacoes).map((n) => (
                 <div key={n.id}>
                   <i />
                   <div>
