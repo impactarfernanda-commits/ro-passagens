@@ -44,6 +44,7 @@ export type Notificacao = {
   id: string;
   canal: string;
   destinatario_tipo: string;
+  destinatario?: string | null;
   mensagem: string;
   status: string;
   created_at: string;
