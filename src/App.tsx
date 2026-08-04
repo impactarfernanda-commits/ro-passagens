@@ -11,6 +11,7 @@ import {
   Login,
   NovaSolicitacao,
   Responsaveis,
+  ConfiguracoesRH,
   Solicitacoes,
 } from "./pages";
 import { Portal } from "./Portal";
@@ -24,6 +25,8 @@ export type Access = {
   canManageRO: boolean;
   canImport: boolean;
   role: string | null;
+  isRh: boolean;
+  canManageRh: boolean;
 };
 
 const EMPTY_ACCESS: Access = {
@@ -34,6 +37,8 @@ const EMPTY_ACCESS: Access = {
   canManageRO: false,
   canImport: false,
   role: null,
+  isRh: false,
+  canManageRh: false,
 };
 
 export function App() {
@@ -66,10 +71,12 @@ export function App() {
         .eq("ativo", true)
         .maybeSingle(),
       supabase.rpc("ro_is_system_admin", { p_user: session.user.id }),
+      supabase.rpc("ro_is_rh_active", { p_user_id: session.user.id }),
+      supabase.rpc("ro_can_manage_rh"),
     ])
-      .then(([roles, ro, systemAdmin]) => {
+      .then(([roles, ro, systemAdmin, rh, manageRh]) => {
         const names = (roles.data || []).map((r) => String(r.role));
-        const role = names[0] || null;
+        const role = names.includes("diretor") ? "diretor" : names.includes("gerente") ? "gerente" : names[0] || null;
         const isAdmin = names.some((r) => ["gerente", "diretor"].includes(r));
         const isRO = Boolean(ro.data);
         setAccess({
@@ -80,6 +87,8 @@ export function App() {
           canOperateRO: isRO,
           canManageRO: isAdmin,
           canImport: Boolean(systemAdmin.data),
+          isRh: Boolean(rh.data),
+          canManageRh: Boolean(manageRh.data),
         });
       })
       .finally(() => setAccessLoading(false));
@@ -108,6 +117,7 @@ export function App() {
               canViewAll={access.canViewAll}
               admin={access.canManageRO}
               canImport={access.canImport}
+              canManageRh={access.canManageRh}
             />
             <section className="content">
               <Header onMenu={() => setSide(true)} />
@@ -140,7 +150,11 @@ export function App() {
                 />
                 <Route
                   path="/nova"
-                  element={<NovaSolicitacao userId={session.user.id} />}
+                  element={<NovaSolicitacao userId={session.user.id} access={access} />}
+                />
+                <Route
+                  path="/configuracoes-rh"
+                  element={access.canManageRh ? <ConfiguracoesRH /> : <Navigate to="/solicitacoes" replace />}
                 />
                 <Route
                   path="/solicitacoes/:id"

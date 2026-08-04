@@ -51,6 +51,7 @@ export function Sidebar({
   canViewAll,
   admin,
   canImport,
+  canManageRh,
 }: {
   open: boolean;
   onClose: () => void;
@@ -58,6 +59,7 @@ export function Sidebar({
   canViewAll: boolean;
   admin: boolean;
   canImport: boolean;
+  canManageRh: boolean;
 }) {
   const links = [
     ["/painel", "Painel", LayoutDashboard],
@@ -92,6 +94,12 @@ export function Sidebar({
             <NavLink to="/relatorios" onClick={onClose}>
               <BarChart3 size={19} />
               Relatórios
+            </NavLink>
+          )}
+          {canManageRh && (
+            <NavLink to="/configuracoes-rh" onClick={onClose}>
+              <Settings size={19} />
+              Configurações RH
             </NavLink>
           )}
           {canImport && (

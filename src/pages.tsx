@@ -35,18 +35,21 @@ import {
   statusLabel,
   statusOptions,
 } from "./lib";
-import { validatePdfFile } from "./pdfFileValidation";
+import { validatePdfFile, validatePdfSignature } from "./pdfFileValidation";
 import { extractTicketDataFromPdf } from "./pdfPassagem";
 import { calcularCustosSemDuplicidade } from "./passagemGrouping";
 import { deduplicateNotifications } from "./notifications";
 import { buildPurchaseCosts, totalTicketValues } from "./purchaseCosts";
 import { supabase } from "./supabase";
+import { calcularDataMinima, categoriaDocumento, motivosPermitidos, regraPrazo } from "./passagemRules";
 import type {
   Anexo,
   Custo,
+  DesligamentoSubtipo,
   Funcionario,
   Motivo,
   Obra,
+  Perfil,
   Solicitacao,
   Status,
 } from "./types";
@@ -706,7 +709,7 @@ export function Solicitacoes({
       .from("ro_passagem_solicitacoes")
       .select(join)
       .order("created_at", { ascending: false });
-    if (!access.canViewAll) q = q.eq("solicitante_id", userId);
+    if (!access.canViewAll && !access.isRh) q = q.eq("solicitante_id", userId);
     const { data } = await q;
     const loaded = (data || []) as unknown as Solicitacao[];
     const ids = [
@@ -729,7 +732,7 @@ export function Solicitacoes({
     );
     setRows(loaded);
     setLoading(false);
-  }, [access.canViewAll, userId]);
+  }, [access.canViewAll, access.isRh, userId]);
   useAutoFinalization(access.canViewAll, load);
   useEffect(() => {
     load();
@@ -931,19 +934,24 @@ export function Solicitacoes({
     </Page>
   );
 }
-export function NovaSolicitacao({ userId }: { userId: string }) {
+export function NovaSolicitacao({ userId, access }: { userId: string; access: Access }) {
   const { funcionarios, obras } = useCatalogos();
   const nav = useNavigate();
   const [busy, setBusy] = useState(false);
   const [erro, setErro] = useState("");
   const [solicitante, setSolicitante] = useState("");
   const [podeExceder, setPodeExceder] = useState(false);
+  const [diasNaoUteis, setDiasNaoUteis] = useState<Array<{data:string;ativo:boolean}>>([]);
+  const [anosCalendario, setAnosCalendario] = useState<Array<{ano:number;completo:boolean}>>([]);
+  const [documento, setDocumento] = useState<File | null>(null);
   const [form, setForm] = useState({
     funcionario_id: "",
     obra_id: "",
     origem: "",
     destino: "",
     motivo: "" as Motivo | "",
+    desligamento_subtipo: "" as DesligamentoSubtipo | "",
+    primeiro_embarque_em: "",
     data_ida: "",
     data_retorno: "",
     centro_custo_retorno_id: "",
@@ -967,14 +975,15 @@ export function NovaSolicitacao({ userId }: { userId: string }) {
     supabase
       .rpc("ro_is_admin", { p_user: userId })
       .then(({ data }) => setPodeExceder(Boolean(data)));
+    Promise.all([
+      supabase.from("ro_calendario_nao_util").select("data,ativo").eq("ativo", true),
+      supabase.from("ro_calendario_anos").select("ano,completo"),
+    ]).then(([dias, anos]) => { setDiasNaoUteis(dias.data || []); setAnosCalendario(anos.data || []); });
   }, [userId]);
-  const idaMinima = (() => {
-    const d = new Date();
-    d.setHours(12, 0, 0, 0);
-    d.setDate(d.getDate() + 10);
-    return d.toISOString().slice(0, 10);
-  })();
-  const exigePrazo = ["ferias", "folga_campo"].includes(form.motivo);
+  const regra = regraPrazo(form.motivo || null, form.desligamento_subtipo || null);
+  const calculo = calcularDataMinima(new Date(), regra.tipo, regra.quantidade, diasNaoUteis, anosCalendario);
+  const idaMinima = calculo.data;
+  const exigePrazo = regra.tipo !== "sem_prazo_minimo";
   const funcionarioSelecionado = funcionarios.find((x) => x.id === form.funcionario_id);
   const funcionarioRestrito = Boolean(
     funcionarioSelecionado &&
@@ -983,7 +992,7 @@ export function NovaSolicitacao({ userId }: { userId: string }) {
     funcionarioSelecionado.escopo_passagens === "restrito_ro",
   );
   const foraPrazo =
-    exigePrazo && Boolean(form.data_ida) && form.data_ida < idaMinima;
+    Boolean(form.data_ida) && form.data_ida < idaMinima;
   function pickFuncionario(id: string) {
     const f = funcionarios.find((x) => x.id === id);
     setForm({
@@ -999,6 +1008,7 @@ export function NovaSolicitacao({ userId }: { userId: string }) {
     setForm({
       ...form,
       motivo,
+      desligamento_subtipo: motivo === "desligamento" ? form.desligamento_subtipo : "",
       data_retorno: temRetorno ? form.data_retorno : "",
       centro_custo_retorno_id: ["ferias", "folga_campo"].includes(motivo)
         ? form.centro_custo_retorno_id
@@ -1029,27 +1039,28 @@ export function NovaSolicitacao({ userId }: { userId: string }) {
       );
       return;
     }
+    if (form.motivo === "desligamento" && !form.desligamento_subtipo) { setErro("Selecione o tipo de desligamento."); return; }
+    if (!form.primeiro_embarque_em || new Date(form.primeiro_embarque_em).getTime() <= Date.now()) { setErro("Informe um primeiro embarque futuro."); return; }
+    const categoria = categoriaDocumento(form.desligamento_subtipo || null);
+    if (categoria && !documento) { setErro("Anexe o documento interno obrigatório em PDF."); return; }
+    if (calculo.anosPendentes.length) { setErro(`O calendário de dias não úteis de ${calculo.anosPendentes[0]} ainda não foi validado.`); return; }
     setBusy(true);
-    const { data: created, error } = await supabase
-      .from("ro_passagem_solicitacoes")
-      .insert({
-        ...form,
-        motivo: form.motivo || null,
-        obra_id: form.obra_id || null,
-        data_retorno: form.data_retorno || null,
-        centro_custo_retorno_id: form.centro_custo_retorno_id || null,
-        centro_custo_destino_id: form.centro_custo_destino_id || null,
-        justificativa_excecao_prazo: form.justificativa_excecao_prazo || null,
-        solicitante_id: userId,
-      })
-      .select("id")
-      .single();
+    const id = crypto.randomUUID(); const documentos: Array<Record<string,string|number>> = []; let uploadedPath="";
+    if (documento && categoria) {
+      const validacao=validatePdfFile(documento) || await validatePdfSignature(documento); if (validacao) { setErro(validacao); setBusy(false); return; }
+      uploadedPath=`${id}/${categoria}/${crypto.randomUUID()}.pdf`;
+      const up=await supabase.storage.from("ro-documentos-internos").upload(uploadedPath,documento,{contentType:"application/pdf"});
+      if(up.error){setErro("Não foi possível enviar o documento interno.");setBusy(false);return;}
+      documentos.push({categoria,storage_path:uploadedPath,arquivo_nome:documento.name,tamanho_bytes:documento.size});
+    }
+    const { data: created, error } = await supabase.rpc("ro_criar_solicitacao_validada", { p_solicitacao:{...form,id,primeiro_embarque_em:new Date(form.primeiro_embarque_em).toISOString()}, p_documentos:documentos });
     if (error) {
-      setErro(error.message);
+      if(uploadedPath) await supabase.storage.from("ro-documentos-internos").remove([uploadedPath]);
+      setErro(error.message.includes("CALENDARIO_INCOMPLETO") ? "O calendário de dias não úteis ainda não foi validado." : "Não foi possível criar a solicitação. Revise os dados e prazos.");
       setBusy(false);
       return;
     }
-    nav(`/solicitacoes/${created.id}`);
+    nav(`/solicitacoes/${created}`);
   }
   return (
     <Page
@@ -1138,7 +1149,7 @@ export function NovaSolicitacao({ userId }: { userId: string }) {
           >
             <option value="">{funcionarioRestrito ? "Não se aplica" : "Selecione"}</option>
             {!funcionarioRestrito && Object.entries(motivoLabel)
-              .filter(([v]) => v !== "viagem_diretoria")
+              .filter(([v]) => motivosPermitidos(access.role, access.isRh).includes(v as Motivo))
               .map(([v, l]) => (
                 <option value={v} key={v}>
                   {l}
@@ -1146,16 +1157,21 @@ export function NovaSolicitacao({ userId }: { userId: string }) {
               ))}
           </select>
         </label>
+        {form.motivo === "desligamento" && <label>Tipo de desligamento *<select required value={form.desligamento_subtipo} onChange={(e)=>{setForm({...form,desligamento_subtipo:e.target.value as DesligamentoSubtipo});setDocumento(null);}}><option value="">Selecione</option><option value="programado_outros">Desligamento programado / outros</option><option value="justa_causa">Justa causa</option><option value="pedido_demissao">Pedido de demissão</option><option value="ma_conduta">Má conduta</option></select></label>}
+        <div className="alert wide">{regra.tipo === "sem_prazo_minimo" ? "Sem antecedência mínima; o embarque precisa estar no futuro." : `${motivoLabel[form.motivo as Motivo] || "Este motivo"} exige ${regra.quantidade} ${regra.tipo === "dias_uteis" ? "dias úteis" : "dias corridos"}. Primeira data permitida: ${data(idaMinima)}.`}</div>
         <label>
           Data de ida *
           <input
             type="date"
             required
+            readOnly
             min={exigePrazo && !podeExceder ? idaMinima : undefined}
             value={form.data_ida}
             onChange={(e) => setForm({ ...form, data_ida: e.target.value })}
           />
         </label>
+        <label>Primeiro embarque *<input type="datetime-local" required value={form.primeiro_embarque_em} onChange={(e)=>setForm({...form,primeiro_embarque_em:e.target.value,data_ida:e.target.value.slice(0,10)})}/></label>
+        {categoriaDocumento(form.desligamento_subtipo || null) && <label className="wide">Documento interno obrigatório — {form.desligamento_subtipo === "justa_causa" ? "Termo de justa causa" : "Carta de pedido de demissão"}<input type="file" accept="application/pdf,.pdf" required onChange={(e)=>setDocumento(e.target.files?.[0] || null)}/><small>Somente PDF, até 10 MB. Acesso interno restrito.</small></label>}
         {exigePrazo && (
           <>
             <label>
@@ -1243,11 +1259,39 @@ export function NovaSolicitacao({ userId }: { userId: string }) {
   );
 }
 
+export function ConfiguracoesRH() {
+  const [aba,setAba]=useState<"rh"|"calendario">("rh");
+  const [rh,setRh]=useState<Array<{user_id:string;ativo:boolean;perfil?:Perfil}>>([]);
+  const [usuarios,setUsuarios]=useState<Perfil[]>([]); const [busca,setBusca]=useState("");
+  const [dias,setDias]=useState<Array<{id:string;data:string;descricao:string;tipo:string;abrangencia:string;estado:string|null;municipio:string|null;ativo:boolean}>>([]);
+  const [ano,setAno]=useState(new Date().getFullYear()); const [mensagem,setMensagem]=useState("");
+  const [novo,setNovo]=useState({data:"",descricao:"",tipo:"feriado",abrangencia:"nacional"});
+  const carregar=useCallback(async()=>{
+    const [r,u,c]=await Promise.all([
+      supabase.from("ro_rh_responsaveis").select("user_id,ativo"),
+      supabase.rpc("ro_admin_user_search",{p_search:busca}),
+      supabase.from("ro_calendario_nao_util").select("id,data,descricao,tipo,abrangencia,estado,municipio,ativo").gte("data",`${ano}-01-01`).lte("data",`${ano}-12-31`).order("data"),
+    ]); const perfis=(u.data||[]) as Perfil[]; setUsuarios(perfis); setRh((r.data||[]).map((x)=>({...x,perfil:perfis.find((p)=>p.id===x.user_id)}))); setDias(c.data||[]);
+  },[ano,busca]);
+  useEffect(()=>{carregar();},[carregar]);
+  async function salvarRh(userId:string,ativo:boolean){const {error}=await supabase.from("ro_rh_responsaveis").upsert({user_id:userId,ativo},{onConflict:"user_id"});setMensagem(error?"Não foi possível alterar a equipe RH.":"Equipe RH atualizada.");await carregar();}
+  async function adicionarDia(e:React.FormEvent){e.preventDefault();const local=novo.abrangencia==="nacional"?{estado:null,municipio:null}:novo.abrangencia==="estadual"?{estado:"SP",municipio:null}:{estado:"SP",municipio:"Rio Claro"};const {error}=await supabase.from("ro_calendario_nao_util").insert({...novo,...local});if(!error)await supabase.from("ro_calendario_anos").upsert({ano:new Date(`${novo.data}T12:00`).getFullYear(),completo:false},{onConflict:"ano"});setMensagem(error?"Não foi possível cadastrar a data.":"Data cadastrada; o ano voltou a incompleto.");await carregar();}
+  async function validarAno(completo:boolean){const {error}=await supabase.from("ro_calendario_anos").upsert({ano,completo},{onConflict:"ano"});setMensagem(error?"Não foi possível validar o ano.":completo?"Ano validado.":"Ano marcado como incompleto.");}
+  const candidatos=usuarios.slice(0,20);
+  async function editarDescricao(id:string,atual:string){const descricao=window.prompt("Nova descrição",atual)?.trim();if(!descricao)return;await supabase.from("ro_calendario_nao_util").update({descricao}).eq("id",id);await carregar();}
+  return <Page title="Configurações de RH" subtitle="Acesso exclusivo da administradora Fernanda">
+    <div className="actions"><button className={`btn ${aba==="rh"?"primary":"secondary"}`} onClick={()=>setAba("rh")}>Equipe RH</button><button className={`btn ${aba==="calendario"?"primary":"secondary"}`} onClick={()=>setAba("calendario")}>Calendário de dias não úteis</button></div>
+    {mensagem&&<div className="alert">{mensagem}</div>}
+    {aba==="rh"?<><div className="card form"><label className="wide">Pesquisar usuário cadastrado<input value={busca} onChange={(e)=>setBusca(e.target.value)} placeholder="Nome ou e-mail"/></label>{busca&&candidatos.map((u)=><div className="wide actions" key={u.id}><span>{u.full_name||u.email}</span><button className="btn secondary" onClick={()=>salvarRh(u.id,true)}>Incluir/ativar</button></div>)}</div><div className="card"><h2>Integrantes</h2>{rh.length?rh.map((r)=><div className="actions" key={r.user_id}><span>{r.perfil?.full_name||r.perfil?.email||r.user_id} — {r.ativo?"Ativo":"Inativo"}</span><button className="btn secondary" onClick={()=>salvarRh(r.user_id,!r.ativo)}>{r.ativo?"Desativar":"Ativar"}</button></div>):<Empty text="Nenhum integrante RH cadastrado."/>}</div></>:<><div className="card actions"><label>Ano<input type="number" value={ano} onChange={(e)=>setAno(Number(e.target.value))}/></label><button className="btn primary" onClick={()=>validarAno(true)}>Marcar ano como validado</button><button className="btn secondary" onClick={()=>validarAno(false)}>Marcar incompleto</button></div><form className="card form" onSubmit={adicionarDia}><label>Data *<input type="date" required value={novo.data} onChange={(e)=>setNovo({...novo,data:e.target.value})}/></label><label>Descrição *<input required value={novo.descricao} onChange={(e)=>setNovo({...novo,descricao:e.target.value})}/></label><label>Tipo<select value={novo.tipo} onChange={(e)=>setNovo({...novo,tipo:e.target.value})}><option value="feriado">Feriado</option><option value="ponto_facultativo">Ponto facultativo</option></select></label><label>Abrangência<select value={novo.abrangencia} onChange={(e)=>setNovo({...novo,abrangencia:e.target.value})}><option value="nacional">Nacional</option><option value="estadual">Estadual — SP</option><option value="municipal">Municipal — Rio Claro/SP</option></select></label><button className="btn primary">Cadastrar</button></form><div className="card">{dias.length?dias.map((d)=><div className="actions" key={d.id}><span>{data(d.data)} — {d.descricao} ({d.tipo.replace("_"," ")}, {d.abrangencia}) — {d.ativo?"Ativo":"Inativo"}</span><button className="btn secondary" onClick={()=>editarDescricao(d.id,d.descricao)}>Editar descrição</button><button className="btn secondary" onClick={async()=>{await supabase.from("ro_calendario_nao_util").update({ativo:!d.ativo}).eq("id",d.id);await supabase.from("ro_calendario_anos").upsert({ano,completo:false},{onConflict:"ano"});await carregar();}}>{d.ativo?"Desativar":"Ativar"}</button></div>):<Empty text="Nenhuma data cadastrada para este ano."/>}</div></>}
+  </Page>;
+}
+
 export function Detalhe({ access }: { access: Access }) {
   const { id } = useParams();
   const [row, setRow] = useState<Solicitacao | null>(null);
   const [loading, setLoading] = useState(true);
   const [erro, setErro] = useState("");
+  const [documentosInternos,setDocumentosInternos]=useState<Array<{id:string;categoria:string;arquivo_nome:string;storage_path:string;url?:string}>>([]);
   const load = useCallback(() => {
     if (!id) return;
     supabase
@@ -1303,6 +1347,7 @@ export function Detalhe({ access }: { access: Access }) {
       });
   }, [id]);
   useEffect(load, [load]);
+  useEffect(()=>{if(!id || !(access.isRh||access.isRO||access.isAdmin))return;supabase.from("ro_passagem_documentos_internos").select("id,categoria,arquivo_nome,storage_path").eq("solicitacao_id",id).then(async({data})=>{const docs=await Promise.all((data||[]).map(async(d)=>{const signed=await supabase.storage.from("ro-documentos-internos").createSignedUrl(d.storage_path,300);return {...d,url:signed.data?.signedUrl};}));setDocumentosInternos(docs);});},[id,access.isRh,access.isRO,access.isAdmin]);
   if (loading)
     return (
       <Page title="Solicitação">
@@ -1362,6 +1407,8 @@ export function Detalhe({ access }: { access: Access }) {
           <DT t="Origem" v={row.origem} />
           <DT t="Destino" v={row.destino} />
           <DT t="Ida prevista" v={data(row.data_ida)} />
+          <DT t="Primeiro embarque" v={dataHora(row.primeiro_embarque_em)} />
+          {(access.isRh||access.isRO||access.isAdmin)&&row.desligamento_subtipo&&<DT t="Tipo de desligamento" v={row.desligamento_subtipo.replaceAll("_"," ")} />}
           {["ferias", "folga_campo"].includes(row.motivo || "") && (
             <>
               <DT t="Retorno previsto" v={data(row.data_retorno)} />
@@ -1382,6 +1429,7 @@ export function Detalhe({ access }: { access: Access }) {
           <DT t="Observações" v={row.observacoes_solicitante} />
         </dl>
       </section>
+      {(access.isRh||access.isRO||access.isAdmin)&&documentosInternos.length>0&&<section className="card"><h2>Documentos internos restritos</h2>{documentosInternos.map((d)=><div className="actions" key={d.id}><span>{d.categoria==="termo_justa_causa"?"Termo de justa causa":"Carta de pedido de demissão"}</span>{d.url&&<a className="btn secondary" href={d.url} target="_blank" rel="noreferrer">Abrir PDF</a>}</div>)}</section>}
       {access.canOperateRO && row.status === "solicitada" && (
         <Assumir row={row} onDone={load} />
       )}

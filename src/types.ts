@@ -6,7 +6,9 @@ export type Motivo =
   | "admissao"
   | "inicio_obra"
   | "retorno_obra"
+  | "recesso"
   | "viagem_diretoria";
+export type DesligamentoSubtipo = "programado_outros" | "justa_causa" | "pedido_demissao" | "ma_conduta";
 export type Status =
   | "solicitada"
   | "em_analise"
@@ -83,7 +85,10 @@ export type Solicitacao = {
   origem: string;
   destino: string;
   motivo: Motivo | null;
+  desligamento_subtipo: DesligamentoSubtipo | null;
+  origem_solicitacao: "comum" | "rh" | "gerencial" | "administrativo";
   data_ida: string;
+  primeiro_embarque_em: string | null;
   data_retorno: string | null;
   centro_custo_retorno_id: string | null;
   retorno_indefinido: boolean;
