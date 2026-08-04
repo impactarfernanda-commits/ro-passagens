@@ -1,5 +1,5 @@
--- RO Passagens: prazos, RH, calendário e documentos internos.
--- Aplicação exclusivamente manual no SQL Editor. Não contém dados de RH ou feriados.
+﻿-- RO Passagens: prazos, RH, calendÃ¡rio e documentos internos.
+-- AplicaÃ§Ã£o exclusivamente manual no SQL Editor. NÃ£o contÃ©m dados de RH ou feriados.
 begin;
 create table if not exists public.ro_rh_responsaveis (
   user_id uuid primary key references auth.users(id) on delete cascade,
@@ -151,7 +151,7 @@ create trigger ro_validar_nova_solicitacao before insert on public.ro_passagem_s
 drop trigger if exists ro_revalidar_solicitacao_editada on public.ro_passagem_solicitacoes;
 create trigger ro_revalidar_solicitacao_editada before update of motivo,desligamento_subtipo,data_ida,primeiro_embarque_em,origem,destino on public.ro_passagem_solicitacoes for each row execute function public.ro_validar_nova_solicitacao();
 
--- A RPC reserva o ID, registra metadados verificados e insere a solicitação na mesma transação.
+-- A RPC reserva o ID, registra metadados verificados e insere a solicitaÃ§Ã£o na mesma transaÃ§Ã£o.
 create or replace function public.ro_criar_solicitacao_validada(p_solicitacao jsonb,p_documentos jsonb default '[]'::jsonb)
 returns uuid language plpgsql security definer set search_path=public,storage,pg_temp as $$
 declare v_id uuid:=coalesce(nullif(p_solicitacao->>'id','')::uuid,gen_random_uuid()); v_doc jsonb; v_obj storage.objects%rowtype;
@@ -237,4 +237,5 @@ create unique index if not exists ro_calendario_identidade_uidx on public.ro_cal
 create index if not exists ro_rh_ativo_idx on public.ro_rh_responsaveis(user_id) where ativo;
 create index if not exists ro_documentos_sol_categoria_idx on public.ro_passagem_documentos_internos(solicitacao_id,categoria);
 create index if not exists ro_solicitacoes_origem_status_idx on public.ro_passagem_solicitacoes(origem_solicitacao,status,created_at desc);
-commit;
+ROLLBACK;
+

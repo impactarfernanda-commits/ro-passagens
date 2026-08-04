@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { calcularDataMinima, categoriaDocumento, getPrimeiroEmbarque, isFernandaAdmin, motivosPermitidos, regraPrazo, validarSolicitacao, type ValidacaoInput } from "../src/passagemRules.ts";
+import { calcularDataMinima, calendarYearsToInvalidate, categoriaDocumento, getPrimeiroEmbarque, isFernandaAdmin, motivosPermitidos, regraPrazo, validarSolicitacao, type ValidacaoInput } from "../src/passagemRules.ts";
 import { validatePdfFile, validatePdfSignature } from "../src/pdfFileValidation.ts";
 
 const sp=(value:string)=>new Date(`${value}-03:00`);
@@ -42,6 +42,14 @@ test("gerente vê todos os motivos de criação",()=>assert.equal(motivosPermiti
 test("diretor vê todos e não vê viagem diretoria",()=>{const r=motivosPermitidos("diretor",false);assert.equal(r.length,8);assert.equal(r.includes("viagem_diretoria"),false);});
 test("Fernanda administra com e-mail case-insensitive",()=>{assert.equal(isFernandaAdmin("FERNANDA.SOUZA@TANKSBR.COM.BR"),true);assert.equal(isFernandaAdmin("fernanda.souza@tanksbr.com.br"),true);});
 test("outro gerente ou diretor não administra",()=>assert.equal(isFernandaAdmin("diretor@tanksbr.com.br"),false));
+test("usuário sem role não vê Admissão",()=>assert.equal(motivosPermitidos(null,false).includes("admissao"),false));
+test("usuário sem role RH fica limitado aos motivos RH",()=>assert.deepEqual(motivosPermitidos(null,true),["admissao","desligamento","inicio_obra"]));
+test("usuário sem role não ultrapassa prazo",()=>assert.ok(validar({role:null,primeiroEmbarque:"2026-08-10T10:00:00-03:00"}).bloqueios.includes("FORA_DO_PRAZO")));
+test("usuário sem role com justificativa continua bloqueado",()=>assert.ok(validar({role:null,primeiroEmbarque:"2026-08-10T10:00:00-03:00",justificativa:"Justificativa suficientemente longa"}).bloqueios.includes("FORA_DO_PRAZO")));
+test("somente gerente ou diretor real usa exceção",()=>{assert.equal(validar({role:"gerente",primeiroEmbarque:"2026-08-10T10:00:00-03:00",justificativa:"Justificativa suficientemente longa"}).bloqueios.length,0);assert.equal(validar({role:"diretor",primeiroEmbarque:"2026-08-10T10:00:00-03:00",justificativa:"Justificativa suficientemente longa"}).bloqueios.length,0);});
+test("usuário comum não cria motivo null",()=>assert.ok(validar({motivo:null,role:"assistente",canUseAdministrativeNull:false}).bloqueios.includes("MOTIVO_ADMINISTRATIVO_NAO_PERMITIDO")));
+test("administrativo autorizado cria motivo null",()=>assert.equal(validar({motivo:null,role:"coordenador",canUseAdministrativeNull:true}).bloqueios.length,0));
+test("gerente e diretor obedecem à autorização existente para motivo null",()=>{assert.ok(validar({motivo:null,role:"gerente",canUseAdministrativeNull:false}).bloqueios.includes("MOTIVO_ADMINISTRATIVO_NAO_PERMITIDO"));assert.equal(validar({motivo:null,role:"diretor",canUseAdministrativeNull:true}).bloqueios.length,0);});
 
 test("desligamento sem subtipo bloqueia",()=>assert.ok(validar({motivo:"desligamento",desligamentoSubtipo:null}).bloqueios.includes("SUBTIPO_DESLIGAMENTO_OBRIGATORIO")));
 test("justa causa exige Termo",()=>assert.ok(validar({motivo:"desligamento",desligamentoSubtipo:"justa_causa",primeiroEmbarque:"2026-08-03T11:00:00-03:00"}).bloqueios.includes("DOCUMENTO_INTERNO_OBRIGATORIO:termo_justa_causa")));
@@ -75,3 +83,8 @@ test("validador real rejeita extensão não PDF",()=>assert.ok(validatePdfFile({
 test("validador real rejeita arquivo acima de 10 MB",()=>assert.ok(validatePdfFile({name:"arquivo.pdf",type:"application/pdf",size:10*1024*1024+1})));
 test("assinatura PDF válida é aceita",async()=>assert.equal(await validatePdfSignature(new Blob(["%PDF-1.7"])),null));
 test("arquivo renomeado para PDF é rejeitado pela assinatura",async()=>assert.ok(await validatePdfSignature(new Blob(["MZ executable"]))));
+test("update no mesmo ano invalida uma vez",()=>assert.deepEqual(calendarYearsToInvalidate("UPDATE","2026-01-10","2026-12-20"),[2026]));
+test("update entre 2026 e 2027 invalida ambos",()=>assert.deepEqual(calendarYearsToInvalidate("UPDATE","2026-12-20","2027-01-10"),[2026,2027]));
+test("delete invalida o ano antigo",()=>assert.deepEqual(calendarYearsToInvalidate("DELETE","2026-05-01",null),[2026]));
+test("insert invalida o ano novo",()=>assert.deepEqual(calendarYearsToInvalidate("INSERT",null,"2027-05-01"),[2027]));
+test("alteração de descrição conserva o mesmo ano incompleto",()=>assert.deepEqual(calendarYearsToInvalidate("UPDATE","2026-05-01","2026-05-01"),[2026]));

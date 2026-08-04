@@ -1,5 +1,6 @@
 -- NÃO EXECUTAR EM PRODUÇÃO. Smoke test transacional para projeto Supabase isolado.
 -- Substitua os UUIDs abaixo por usuários de teste existentes no Auth do ambiente isolado.
+-- Para os testes de motivo null, "funcionario" deve apontar para fixture restrito_ro.
 -- O ROLLBACK final desfaz todas as alterações do teste.
 begin;
 
@@ -45,6 +46,28 @@ do $$ begin
 exception when others then
   if sqlerrm not like 'CALENDARIO_INCOMPLETO:%' then raise; end if;
 end $$;
+
+-- Usuário sem role/comum não pode criar motivo null por insert direto nem pela RPC.
+select pg_temp.as_user(comum) from ro_smoke_context;
+do $$ declare c ro_smoke_context%rowtype; begin select * into c from ro_smoke_context;
+  begin
+    insert into public.ro_passagem_solicitacoes(id,funcionario_id,obra_id,solicitante_id,origem,destino,motivo,data_ida,primeiro_embarque_em,status)
+    values(gen_random_uuid(),c.funcionario,c.obra,c.comum,'A','B',null,current_date+1,now()+interval '1 day','solicitada');
+    raise exception 'SMOKE_FAIL: insert direto com motivo null deveria falhar';
+  exception when others then if sqlerrm='SMOKE_FAIL: insert direto com motivo null deveria falhar' or sqlerrm not like 'MOTIVO_ADMINISTRATIVO_NAO_PERMITIDO%' then raise; end if; end;
+  begin
+    perform public.ro_criar_solicitacao_validada(jsonb_build_object('funcionario_id',c.funcionario,'obra_id',c.obra,'origem','A','destino','B','motivo',null,'data_ida',(current_date+1)::text,'primeiro_embarque_em',(now()+interval '1 day')::text),'[]'::jsonb);
+    raise exception 'SMOKE_FAIL: RPC com motivo null deveria falhar';
+  exception when others then if sqlerrm='SMOKE_FAIL: RPC com motivo null deveria falhar' or sqlerrm not like 'MOTIVO_ADMINISTRATIVO_NAO_PERMITIDO%' then raise; end if; end;
+end $$;
+
+-- RO ativo usa o fluxo administrativo preexistente, desde que o funcionário seja restrito_ro.
+reset role;
+insert into public.ro_responsaveis(user_id,ativo) select ro,true from ro_smoke_context on conflict(user_id) do update set ativo=true;
+select pg_temp.as_user(ro) from ro_smoke_context;
+insert into ro_smoke_results(nome,id)
+select 'administrativo_ro',public.ro_criar_solicitacao_validada(jsonb_build_object('funcionario_id',funcionario,'obra_id',obra,'origem','A','destino','B','motivo',null,'data_ida',(current_date+1)::text,'primeiro_embarque_em',(now()+interval '1 day')::text),'[]'::jsonb) from ro_smoke_context;
+select pg_temp.assert_true((select origem_solicitacao='administrativo' from public.ro_passagem_solicitacoes where id=(select id from ro_smoke_results where nome='administrativo_ro')),'RO autorizado deve preservar motivo null administrativo');
 
 -- Complete o calendário somente no ambiente isolado para os testes seguintes.
 update public.ro_calendario_anos set completo=true,validado_em=now(),validado_por=(select fernanda from ro_smoke_context)

@@ -8,6 +8,7 @@ export type ValidacaoInput = {
   motivo: Motivo | null; desligamentoSubtipo?: DesligamentoSubtipo | null; role: string | null; isRh: boolean;
   primeiroEmbarque: string | null; agora: Date; diasNaoUteis?: DiaNaoUtil[]; anos?: CalendarioAno[];
   justificativa?: string; documentos?: DocumentoInternoInput[];
+  canUseAdministrativeNull?: boolean;
 };
 export const RH_MOTIVOS: Motivo[] = ["admissao", "desligamento", "inicio_obra"];
 export const MOTIVOS_CRIACAO: Motivo[] = ["ferias", "folga_campo", "desligamento", "transferencia_obra", "admissao", "inicio_obra", "retorno_obra", "recesso"];
@@ -62,9 +63,15 @@ export function categoriaDocumento(subtipo?: DesligamentoSubtipo | null) {
 }
 
 export function isFernandaAdmin(email?: string | null) { return email?.trim().toLocaleLowerCase("pt-BR") === "fernanda.souza@tanksbr.com.br"; }
+export function calendarYearsToInvalidate(operation:"INSERT"|"UPDATE"|"DELETE",oldDate?:string|null,newDate?:string|null){
+  const year=(value?:string|null)=>value?Number(value.slice(0,4)):null;
+  const years=operation==="INSERT"?[year(newDate)]:operation==="DELETE"?[year(oldDate)]:[year(oldDate),year(newDate)];
+  return [...new Set(years.filter((value):value is number=>value!==null&&!Number.isNaN(value)))];
+}
 
 export function validarSolicitacao(input: ValidacaoInput) {
   const bloqueios: string[]=[]; const gerencial=input.role==="gerente"||input.role==="diretor";
+  if(input.motivo===null&&!input.canUseAdministrativeNull)bloqueios.push("MOTIVO_ADMINISTRATIVO_NAO_PERMITIDO");
   if (input.motivo==="viagem_diretoria" || (input.motivo && !motivosPermitidos(input.role,input.isRh).includes(input.motivo))) bloqueios.push("MOTIVO_NAO_PERMITIDO");
   if(input.motivo==="desligamento"&&!input.desligamentoSubtipo)bloqueios.push("SUBTIPO_DESLIGAMENTO_OBRIGATORIO");
   if(input.motivo!=="desligamento"&&input.desligamentoSubtipo)bloqueios.push("SUBTIPO_DESLIGAMENTO_INVALIDO");
