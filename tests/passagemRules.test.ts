@@ -1,0 +1,77 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import { calcularDataMinima, categoriaDocumento, getPrimeiroEmbarque, isFernandaAdmin, motivosPermitidos, regraPrazo, validarSolicitacao, type ValidacaoInput } from "../src/passagemRules.ts";
+import { validatePdfFile, validatePdfSignature } from "../src/pdfFileValidation.ts";
+
+const sp=(value:string)=>new Date(`${value}-03:00`);
+const anos2026=[{ano:2026,completo:true}];
+const base:ValidacaoInput={motivo:"ferias",role:"assistente",isRh:false,agora:sp("2026-08-03T10:00:00"),primeiroEmbarque:"2026-09-01T10:00:00-03:00",anos:anos2026,documentos:[]};
+const validar=(patch:Partial<ValidacaoInput>)=>validarSolicitacao({...base,...patch});
+
+for(const [nome,motivo,subtipo,tipo,quantidade] of [
+  ["férias","ferias",null,"dias_corridos",25],["folga","folga_campo",null,"dias_corridos",15],
+  ["transferência","transferencia_obra",null,"dias_corridos",15],["admissão","admissao",null,"dias_corridos",15],
+  ["retorno","retorno_obra",null,"dias_corridos",15],["recesso","recesso",null,"dias_corridos",30],
+  ["desligamento programado","desligamento","programado_outros","dias_corridos",25],
+  ["má conduta","desligamento","ma_conduta","dias_uteis",5],
+  ["justa causa","desligamento","justa_causa","sem_prazo_minimo",0],
+  ["pedido de demissão","desligamento","pedido_demissao","sem_prazo_minimo",0],
+] as const)test(`prazo: ${nome}`,()=>{const r=regraPrazo(motivo,subtipo);assert.equal(r.tipo,tipo);assert.equal(r.quantidade,quantidade);});
+
+test("dias corridos 04/08/2026 + 25 = 29/08/2026",()=>assert.equal(calcularDataMinima(sp("2026-08-04T12:00:00"),"dias_corridos",25).data,"2026-08-29"));
+for(const [nome,agora,quantidade,esperada] of [
+  ["segunda 16:30 conta","2026-08-03T16:30:00",5,"2026-08-07"],
+  ["segunda 16:31 não conta","2026-08-03T16:31:00",5,"2026-08-10"],
+  ["sexta 15:30 conta","2026-08-07T15:30:00",1,"2026-08-07"],
+  ["sexta 15:31 não conta","2026-08-07T15:31:00",1,"2026-08-10"],
+  ["sábado inicia segunda","2026-08-08T10:00:00",1,"2026-08-10"],
+  ["domingo inicia segunda","2026-08-09T10:00:00",1,"2026-08-10"],
+] as const)test(nome,()=>assert.equal(calcularDataMinima(sp(agora),"dias_uteis",quantidade,[],anos2026).data,esperada));
+
+for(const nome of ["feriado nacional","feriado estadual SP","feriado municipal Rio Claro","ponto facultativo"])
+  test(nome,()=>assert.equal(calcularDataMinima(sp("2026-08-03T10:00:00"),"dias_uteis",5,[{data:"2026-08-05",ativo:true}],anos2026).data,"2026-08-10"));
+test("dia inativo não desloca",()=>assert.equal(calcularDataMinima(sp("2026-08-03T10:00:00"),"dias_uteis",5,[{data:"2026-08-05",ativo:false}],anos2026).data,"2026-08-07"));
+test("ano incompleto bloqueia",()=>assert.deepEqual(calcularDataMinima(sp("2026-08-03T10:00:00"),"dias_uteis",5,[],[]).anosPendentes,[2026]));
+test("travessia de ano exige os dois calendários",()=>assert.deepEqual(calcularDataMinima(sp("2026-12-30T10:00:00"),"dias_uteis",5,[],anos2026).anosPendentes,[2027]));
+
+test("usuário comum não vê admissão e vê recesso",()=>{const r=motivosPermitidos("assistente",false);assert.equal(r.includes("admissao"),false);assert.equal(r.includes("recesso"),true);});
+test("RH ativo vê somente três motivos",()=>assert.deepEqual(motivosPermitidos("assistente",true),["admissao","desligamento","inicio_obra"]));
+test("RH inativo volta às permissões comuns",()=>assert.equal(motivosPermitidos("assistente",false).includes("admissao"),false));
+test("RO sem RH não recebe admissão",()=>assert.equal(motivosPermitidos("coordenador",false).includes("admissao"),false));
+test("gerente vê todos os motivos de criação",()=>assert.equal(motivosPermitidos("gerente",false).length,8));
+test("diretor vê todos e não vê viagem diretoria",()=>{const r=motivosPermitidos("diretor",false);assert.equal(r.length,8);assert.equal(r.includes("viagem_diretoria"),false);});
+test("Fernanda administra com e-mail case-insensitive",()=>{assert.equal(isFernandaAdmin("FERNANDA.SOUZA@TANKSBR.COM.BR"),true);assert.equal(isFernandaAdmin("fernanda.souza@tanksbr.com.br"),true);});
+test("outro gerente ou diretor não administra",()=>assert.equal(isFernandaAdmin("diretor@tanksbr.com.br"),false));
+
+test("desligamento sem subtipo bloqueia",()=>assert.ok(validar({motivo:"desligamento",desligamentoSubtipo:null}).bloqueios.includes("SUBTIPO_DESLIGAMENTO_OBRIGATORIO")));
+test("justa causa exige Termo",()=>assert.ok(validar({motivo:"desligamento",desligamentoSubtipo:"justa_causa",primeiroEmbarque:"2026-08-03T11:00:00-03:00"}).bloqueios.includes("DOCUMENTO_INTERNO_OBRIGATORIO:termo_justa_causa")));
+test("pedido exige Carta",()=>assert.ok(validar({motivo:"desligamento",desligamentoSubtipo:"pedido_demissao",primeiroEmbarque:"2026-08-03T11:00:00-03:00"}).bloqueios.includes("DOCUMENTO_INTERNO_OBRIGATORIO:carta_pedido_demissao")));
+test("categoria incorreta não satisfaz justa causa",()=>assert.ok(validar({motivo:"desligamento",desligamentoSubtipo:"justa_causa",documentos:[{categoria:"carta_pedido_demissao",mimeType:"application/pdf",tamanhoBytes:100}],primeiroEmbarque:"2026-08-03T11:00:00-03:00"}).bloqueios.some((b)=>b.startsWith("DOCUMENTO_INTERNO_OBRIGATORIO"))));
+test("arquivo não PDF bloqueia",()=>assert.ok(validar({motivo:"desligamento",desligamentoSubtipo:"justa_causa",documentos:[{categoria:"termo_justa_causa",mimeType:"image/png",tamanhoBytes:100}],primeiroEmbarque:"2026-08-03T11:00:00-03:00"}).bloqueios.includes("DOCUMENTO_NAO_PDF")));
+test("arquivo acima de 10 MB bloqueia",()=>assert.ok(validar({motivo:"desligamento",desligamentoSubtipo:"justa_causa",documentos:[{categoria:"termo_justa_causa",mimeType:"application/pdf",tamanhoBytes:10*1024*1024+1}],primeiroEmbarque:"2026-08-03T11:00:00-03:00"}).bloqueios.includes("DOCUMENTO_TAMANHO_INVALIDO")));
+test("gerente não dispensa documento",()=>assert.ok(validar({motivo:"desligamento",desligamentoSubtipo:"justa_causa",role:"gerente",primeiroEmbarque:"2026-08-03T11:00:00-03:00"}).bloqueios.some((b)=>b.startsWith("DOCUMENTO_INTERNO_OBRIGATORIO"))));
+
+test("comum fora do prazo bloqueia",()=>assert.ok(validar({primeiroEmbarque:"2026-08-10T10:00:00-03:00"}).bloqueios.includes("FORA_DO_PRAZO")));
+test("gerente fora do prazo sem justificativa bloqueia",()=>assert.ok(validar({role:"gerente",primeiroEmbarque:"2026-08-10T10:00:00-03:00"}).bloqueios.includes("JUSTIFICATIVA_EXCECAO_OBRIGATORIA")));
+test("gerente com justificativa útil pode usar exceção",()=>assert.equal(validar({role:"gerente",primeiroEmbarque:"2026-08-10T10:00:00-03:00",justificativa:"Necessidade operacional urgente"}).bloqueios.length,0));
+test("calendário incompleto não aceita exceção",()=>{const r=validar({motivo:"inicio_obra",role:"gerente",anos:[],primeiroEmbarque:"2026-08-10T10:00:00-03:00",justificativa:"Necessidade operacional urgente"});assert.ok(r.bloqueios.some((b)=>b.startsWith("CALENDARIO_INCOMPLETO")));assert.equal(r.permiteExcecao,false);});
+test("embarque passado nunca aceita exceção",()=>assert.ok(validar({role:"diretor",primeiroEmbarque:"2026-08-03T09:59:59-03:00",justificativa:"Necessidade operacional urgente"}).bloqueios.includes("EMBARQUE_NO_PASSADO")));
+
+test("primeiro embarque somente ida",()=>assert.equal(getPrimeiroEmbarque(["2026-08-10T10:00:00-03:00"]),"2026-08-10T10:00:00-03:00"));
+test("primeiro embarque entre ida e volta",()=>assert.equal(getPrimeiroEmbarque(["2026-08-10T10:00:00-03:00","2026-08-20T10:00:00-03:00"]),"2026-08-10T10:00:00-03:00"));
+test("primeiro embarque usa menor datetime em múltiplos trechos",()=>assert.equal(getPrimeiroEmbarque(["2026-08-12T10:00:00-03:00","2026-08-09T08:00:00-03:00","2026-08-10T07:00:00-03:00"]),"2026-08-09T08:00:00-03:00"));
+test("mesmo dia futuro permitido sem prazo",()=>assert.equal(validar({motivo:"desligamento",desligamentoSubtipo:"justa_causa",primeiroEmbarque:"2026-08-03T10:01:00-03:00",documentos:[{categoria:"termo_justa_causa",mimeType:"application/pdf",tamanhoBytes:100}]}).bloqueios.length,0));
+test("mesmo dia com horário passado bloqueia",()=>assert.ok(validar({motivo:"desligamento",desligamentoSubtipo:"pedido_demissao",primeiroEmbarque:"2026-08-03T09:59:00-03:00",documentos:[{categoria:"carta_pedido_demissao",mimeType:"application/pdf",tamanhoBytes:100}]}).bloqueios.includes("EMBARQUE_NO_PASSADO")));
+
+test("mudança de data recalcula prazo",()=>assert.notEqual(validar({primeiroEmbarque:"2026-09-01T10:00:00-03:00"}).foraDoPrazo,validar({primeiroEmbarque:"2026-08-10T10:00:00-03:00"}).foraDoPrazo));
+test("mudança de motivo recalcula prazo",()=>assert.notEqual(validar({motivo:"ferias"}).regra.quantidade,validar({motivo:"recesso"}).regra.quantidade));
+test("mudança de subtipo recalcula prazo",()=>assert.notEqual(validar({motivo:"desligamento",desligamentoSubtipo:"ma_conduta"}).regra.tipo,validar({motivo:"desligamento",desligamentoSubtipo:"justa_causa"}).regra.tipo));
+test("justa causa para pedido exige nova categoria",()=>assert.ok(validar({motivo:"desligamento",desligamentoSubtipo:"pedido_demissao",documentos:[{categoria:"termo_justa_causa",mimeType:"application/pdf",tamanhoBytes:100}],primeiroEmbarque:"2026-08-03T11:00:00-03:00"}).bloqueios.some((b)=>b.includes("carta_pedido_demissao"))));
+test("registro histórico sem regra permanece representável",()=>assert.equal(regraPrazo("desligamento",null).quantidade,25));
+test("edição relevante exige subtipo atual",()=>assert.ok(validar({motivo:"desligamento",desligamentoSubtipo:null}).bloqueios.includes("SUBTIPO_DESLIGAMENTO_OBRIGATORIO")));
+
+test("labels de documentos são específicos",()=>{assert.equal(categoriaDocumento("justa_causa"),"termo_justa_causa");assert.equal(categoriaDocumento("pedido_demissao"),"carta_pedido_demissao");assert.equal(categoriaDocumento("ma_conduta"),null);});
+test("validador real rejeita extensão não PDF",()=>assert.ok(validatePdfFile({name:"arquivo.png",type:"image/png",size:100})));
+test("validador real rejeita arquivo acima de 10 MB",()=>assert.ok(validatePdfFile({name:"arquivo.pdf",type:"application/pdf",size:10*1024*1024+1})));
+test("assinatura PDF válida é aceita",async()=>assert.equal(await validatePdfSignature(new Blob(["%PDF-1.7"])),null));
+test("arquivo renomeado para PDF é rejeitado pela assinatura",async()=>assert.ok(await validatePdfSignature(new Blob(["MZ executable"]))));
