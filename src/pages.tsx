@@ -41,7 +41,7 @@ import { calcularCustosSemDuplicidade } from "./passagemGrouping";
 import { deduplicateNotifications } from "./notifications";
 import { buildPurchaseCosts, totalTicketValues } from "./purchaseCosts";
 import { supabase } from "./supabase";
-import { calcularDataMinima, categoriaDocumento, motivosPermitidos, regraPrazo } from "./passagemRules";
+import { calcularDataMinima, categoriaDocumento, dataMinimaDoInput, limparDataIdaInvalida, mensagemAntecedencia, motivosPermitidos, regraPrazo } from "./passagemRules";
 import type {
   Anexo,
   Custo,
@@ -940,7 +940,8 @@ export function NovaSolicitacao({ userId, access }: { userId: string; access: Ac
   const [busy, setBusy] = useState(false);
   const [erro, setErro] = useState("");
   const [solicitante, setSolicitante] = useState("");
-  const [podeExceder, setPodeExceder] = useState(false);
+  const [solicitarExcecao, setSolicitarExcecao] = useState(false);
+  const [dataPrazoErro, setDataPrazoErro] = useState(false);
   const [diasNaoUteis, setDiasNaoUteis] = useState<Array<{data:string;ativo:boolean}>>([]);
   const [anosCalendario, setAnosCalendario] = useState<Array<{ano:number;completo:boolean}>>([]);
   const [documento, setDocumento] = useState<File | null>(null);
@@ -951,7 +952,6 @@ export function NovaSolicitacao({ userId, access }: { userId: string; access: Ac
     destino: "",
     motivo: "" as Motivo | "",
     desligamento_subtipo: "" as DesligamentoSubtipo | "",
-    primeiro_embarque_em: "",
     data_ida: "",
     data_retorno: "",
     centro_custo_retorno_id: "",
@@ -972,9 +972,6 @@ export function NovaSolicitacao({ userId, access }: { userId: string; access: Ac
           data?.full_name || user?.email || "Usuário sem identificação",
         );
       });
-    supabase
-      .rpc("ro_is_admin", { p_user: userId })
-      .then(({ data }) => setPodeExceder(Boolean(data)));
     Promise.all([
       supabase.from("ro_calendario_nao_util").select("data,ativo").eq("ativo", true),
       supabase.from("ro_calendario_anos").select("ano,completo"),
@@ -983,6 +980,9 @@ export function NovaSolicitacao({ userId, access }: { userId: string; access: Ac
   const regra = regraPrazo(form.motivo || null, form.desligamento_subtipo || null);
   const calculo = calcularDataMinima(new Date(), regra.tipo, regra.quantidade, diasNaoUteis, anosCalendario);
   const idaMinima = calculo.data;
+  const hojeLocal = calcularDataMinima(new Date(), "sem_prazo_minimo", 0).data;
+  const gerencial = access.role === "gerente" || access.role === "diretor";
+  const dataMinimaInput = dataMinimaDoInput(idaMinima, hojeLocal, gerencial, solicitarExcecao);
   const exigePrazo = regra.tipo !== "sem_prazo_minimo";
   const funcionarioSelecionado = funcionarios.find((x) => x.id === form.funcionario_id);
   const funcionarioRestrito = Boolean(
@@ -993,6 +993,14 @@ export function NovaSolicitacao({ userId, access }: { userId: string; access: Ac
   );
   const foraPrazo =
     Boolean(form.data_ida) && form.data_ida < idaMinima;
+  useEffect(() => {
+    setForm((atual) => {
+      const data_ida = limparDataIdaInvalida(atual.data_ida, dataMinimaInput);
+      if (data_ida === atual.data_ida) return atual;
+      setDataPrazoErro(true);
+      return { ...atual, data_ida };
+    });
+  }, [dataMinimaInput]);
   function pickFuncionario(id: string) {
     const f = funcionarios.find((x) => x.id === id);
     setForm({
@@ -1027,20 +1035,18 @@ export function NovaSolicitacao({ userId, access }: { userId: string; access: Ac
       setErro("Selecione o motivo da solicitação.");
       return;
     }
-    if (foraPrazo && !podeExceder) {
-      setErro(
-        `Solicitações de férias e folga de campo devem ser feitas com pelo menos 10 dias de antecedência. A primeira data permitida é ${data(idaMinima)}.`,
-      );
+    if (!form.data_ida || form.data_ida < dataMinimaInput) {
+      setDataPrazoErro(true);
+      setErro("Selecione uma data que atenda à antecedência mínima.");
       return;
     }
-    if (foraPrazo && podeExceder && !form.justificativa_excecao_prazo.trim()) {
+    if (foraPrazo && gerencial && solicitarExcecao && form.justificativa_excecao_prazo.trim().length < 10) {
       setErro(
-        "Informe a justificativa obrigatória para criar a solicitação fora do prazo.",
+        "A justificativa da exceção deve ter pelo menos 10 caracteres.",
       );
       return;
     }
     if (form.motivo === "desligamento" && !form.desligamento_subtipo) { setErro("Selecione o tipo de desligamento."); return; }
-    if (!form.primeiro_embarque_em || new Date(form.primeiro_embarque_em).getTime() <= Date.now()) { setErro("Informe um primeiro embarque futuro."); return; }
     const categoria = categoriaDocumento(form.desligamento_subtipo || null);
     if (categoria && !documento) { setErro("Anexe o documento interno obrigatório em PDF."); return; }
     if (calculo.anosPendentes.length) { setErro(`O calendário de dias não úteis de ${calculo.anosPendentes[0]} ainda não foi validado.`); return; }
@@ -1053,7 +1059,7 @@ export function NovaSolicitacao({ userId, access }: { userId: string; access: Ac
       if(up.error){setErro("Não foi possível enviar o documento interno.");setBusy(false);return;}
       documentos.push({categoria,storage_path:uploadedPath,arquivo_nome:documento.name,tamanho_bytes:documento.size});
     }
-    const { data: created, error } = await supabase.rpc("ro_criar_solicitacao_validada", { p_solicitacao:{...form,id,primeiro_embarque_em:new Date(form.primeiro_embarque_em).toISOString()}, p_documentos:documentos });
+    const { data: created, error } = await supabase.rpc("ro_criar_solicitacao_validada", { p_solicitacao:{...form,id,solicitar_excecao_prazo:gerencial&&solicitarExcecao}, p_documentos:documentos });
     if (error) {
       if(uploadedPath) await supabase.storage.from("ro-documentos-internos").remove([uploadedPath]);
       setErro(error.message.includes("CALENDARIO_INCOMPLETO") ? "O calendário de dias não úteis ainda não foi validado." : "Não foi possível criar a solicitação. Revise os dados e prazos.");
@@ -1158,19 +1164,18 @@ export function NovaSolicitacao({ userId, access }: { userId: string; access: Ac
           </select>
         </label>
         {form.motivo === "desligamento" && <label>Tipo de desligamento *<select required value={form.desligamento_subtipo} onChange={(e)=>{setForm({...form,desligamento_subtipo:e.target.value as DesligamentoSubtipo});setDocumento(null);}}><option value="">Selecione</option><option value="programado_outros">Desligamento programado / outros</option><option value="justa_causa">Justa causa</option><option value="pedido_demissao">Pedido de demissão</option><option value="ma_conduta">Má conduta</option></select></label>}
-        <div className="alert wide">{regra.tipo === "sem_prazo_minimo" ? "Sem antecedência mínima; o embarque precisa estar no futuro." : `${motivoLabel[form.motivo as Motivo] || "Este motivo"} exige ${regra.quantidade} ${regra.tipo === "dias_uteis" ? "dias úteis" : "dias corridos"}. Primeira data permitida: ${data(idaMinima)}.`}</div>
+        {mensagemAntecedencia(form.motivo || null, form.desligamento_subtipo || null) && <div className="alert wide">{mensagemAntecedencia(form.motivo || null, form.desligamento_subtipo || null)}</div>}
         <label>
           Data de ida *
           <input
             type="date"
             required
-            readOnly
-            min={exigePrazo && !podeExceder ? idaMinima : undefined}
+            min={dataMinimaInput}
             value={form.data_ida}
-            onChange={(e) => setForm({ ...form, data_ida: e.target.value })}
+            onChange={(e) => { setDataPrazoErro(false); setForm({ ...form, data_ida: e.target.value }); }}
           />
+          {dataPrazoErro && <small className="error">Selecione uma data que atenda à antecedência mínima.</small>}
         </label>
-        <label>Primeiro embarque *<input type="datetime-local" required value={form.primeiro_embarque_em} onChange={(e)=>setForm({...form,primeiro_embarque_em:e.target.value,data_ida:e.target.value.slice(0,10)})}/></label>
         {categoriaDocumento(form.desligamento_subtipo || null) && <label className="wide">Documento interno obrigatório — {form.desligamento_subtipo === "justa_causa" ? "Termo de justa causa" : "Carta de pedido de demissão"}<input type="file" accept="application/pdf,.pdf" required onChange={(e)=>setDocumento(e.target.files?.[0] || null)}/><small>Somente PDF, até 10 MB. Acesso interno restrito.</small></label>}
         {exigePrazo && (
           <>
@@ -1220,7 +1225,8 @@ export function NovaSolicitacao({ userId, access }: { userId: string; access: Ac
             </label>
           </>
         )}
-        {foraPrazo && podeExceder && (
+        {gerencial && <label className="checkbox wide"><input type="checkbox" checked={solicitarExcecao} onChange={(e)=>{const marcada=e.target.checked;setSolicitarExcecao(marcada);setDataPrazoErro(false);setForm((atual)=>({...atual,justificativa_excecao_prazo:marcada?atual.justificativa_excecao_prazo:"",data_ida:marcada?atual.data_ida:limparDataIdaInvalida(atual.data_ida,idaMinima)}));}} /> Solicitar exceção de prazo</label>}
+        {gerencial && solicitarExcecao && (
           <label className="wide">
             Justificativa da exceção *
             <textarea
@@ -1413,7 +1419,6 @@ export function Detalhe({ access }: { access: Access }) {
           <DT t="Origem" v={row.origem} />
           <DT t="Destino" v={row.destino} />
           <DT t="Ida prevista" v={data(row.data_ida)} />
-          <DT t="Primeiro embarque" v={dataHora(row.primeiro_embarque_em)} />
           {(access.isRh||access.isRO||access.isAdmin)&&row.desligamento_subtipo&&<DT t="Tipo de desligamento" v={row.desligamento_subtipo.replaceAll("_"," ")} />}
           {["ferias", "folga_campo"].includes(row.motivo || "") && (
             <>
