@@ -1,14 +1,12 @@
 import {
   Bell,
   BarChart3,
-  FileSpreadsheet,
   House,
   LayoutDashboard,
   ListChecks,
   LogOut,
   Menu,
   Plane,
-  Plus,
   Settings,
   Ticket,
   X,
@@ -49,22 +47,17 @@ export function Sidebar({
   onClose,
   onLogout,
   canViewAll,
-  admin,
-  canImport,
-  canManageRh,
+  canConfigure,
 }: {
   open: boolean;
   onClose: () => void;
   onLogout: () => void;
   canViewAll: boolean;
-  admin: boolean;
-  canImport: boolean;
-  canManageRh: boolean;
+  canConfigure: boolean;
 }) {
   const links = [
     ["/painel", "Painel", LayoutDashboard],
     ["/solicitacoes", "Solicitações", ListChecks],
-    ["/nova", "Nova solicitação", Plus],
   ] as const;
   return (
     <>
@@ -84,35 +77,17 @@ export function Sidebar({
                 {label}
               </NavLink>
             ))}
-          {admin && (
-            <NavLink to="/responsaveis" onClick={onClose}>
-              <Settings size={19} />
-              Responsáveis RO
-            </NavLink>
-          )}
           {canViewAll && (
             <NavLink to="/relatorios" onClick={onClose}>
               <BarChart3 size={19} />
               Relatórios
             </NavLink>
           )}
-          {canManageRh && (
-            <NavLink to="/configuracoes-rh" onClick={onClose}>
+          {canConfigure && (
+            <NavLink to="/configuracoes" onClick={onClose}>
               <Settings size={19} />
-              Configurações RH
+              Configurações
             </NavLink>
-          )}
-          {canImport && (
-            <>
-              <NavLink to="/importacao-funcionarios" onClick={onClose}>
-                <FileSpreadsheet size={19} />
-                Importar funcionários
-              </NavLink>
-              <NavLink to="/importacao-centros-custo" onClick={onClose}>
-                <FileSpreadsheet size={19} />
-                Importar centros de custo
-              </NavLink>
-            </>
           )}
         </nav>
         <div className="side-foot">
