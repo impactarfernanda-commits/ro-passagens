@@ -1297,11 +1297,53 @@ export function NovaSolicitacao({ userId, access }: { userId: string; access: Ac
   );
 }
 
+type ResponsibleAdminUser = { id: string; full_name?: string | null; email?: string | null };
+type ResponsibleAdminRow = { id: string; user_id: string; ativo: boolean };
+
+function ResponsibleAdminSection({ users, rows, selected, onSelect, onSearch, onAdd, onToggle, busy, loading, emptyText }: {
+  users: ResponsibleAdminUser[]; rows: ResponsibleAdminRow[]; selected: string;
+  onSelect: (userId: string) => void; onSearch?: (search: string) => void; onAdd: () => void; onToggle: (row: ResponsibleAdminRow) => void;
+  busy: string | null; loading: boolean; emptyText: string;
+}) {
+  const selectedIds = new Set(rows.map((row) => row.user_id));
+  const available = users.filter((user) => !selectedIds.has(user.id));
+  const userLabel = (user?: ResponsibleAdminUser) => user ? [user.full_name, user.email].filter(Boolean).join(" — ") || user.id : "";
+  const [search, setSearch] = useState("");
+  useEffect(() => { if (!selected) setSearch(""); }, [selected]);
+  function searchUser(value: string) {
+    setSearch(value);
+    onSearch?.(value);
+    const found = available.find((user) => userLabel(user) === value);
+    onSelect(found?.id || "");
+  }
+  return <>
+    <div className="card add-ro" aria-busy={busy === "add"}>
+      <Users aria-hidden="true" />
+      <label className="sr-only" htmlFor="responsible-user-select">Selecione um usuário</label>
+      <input id="responsible-user-select" type="search" list="responsible-user-options" value={search} placeholder="Selecione um usuário" autoComplete="off" onChange={(event) => searchUser(event.target.value)} disabled={loading || busy !== null} />
+      <datalist id="responsible-user-options">{available.map((user) => <option key={user.id} value={userLabel(user)} />)}</datalist>
+      <button className="btn primary" type="button" disabled={!selected || loading || busy !== null} onClick={onAdd}>
+        <Plus size={17} aria-hidden="true" />{busy === "add" ? "Adicionando..." : "Adicionar"}
+      </button>
+    </div>
+    <div className="card ro-list" aria-busy={loading || (busy !== null && busy !== "add")}>
+      {loading ? <Spinner /> : rows.length ? rows.map((row) => {
+        const user = users.find((candidate) => candidate.id === row.user_id);
+        const label = userLabel(user) || row.user_id;
+        return <div key={row.id}><div><strong>{label}</strong><small>{row.ativo ? "Responsável ativo" : "Responsável inativo"}</small></div><button className={`btn ${row.ativo ? "danger" : "secondary"}`} type="button" disabled={busy !== null} aria-label={`${row.ativo ? "Inativar" : "Reativar"} ${label}`} onClick={() => onToggle(row)}>{busy === row.id ? "Salvando..." : row.ativo ? "Inativar" : "Reativar"}</button></div>;
+      }) : <Empty text={emptyText} />}
+    </div>
+  </>;
+}
+
 export function ConfiguracoesRH({ secao }: { secao?: "rh" | "calendario" } = {}) {
   const [abaInterna,setAbaInterna]=useState<"rh"|"calendario">("rh");
   const aba = secao || abaInterna;
   const [rh,setRh]=useState<Array<{user_id:string;ativo:boolean;perfil?:Perfil}>>([]);
   const [usuarios,setUsuarios]=useState<Perfil[]>([]); const [busca,setBusca]=useState("");
+  const [selectedRh,setSelectedRh]=useState("");
+  const [rhBusy,setRhBusy]=useState<string|null>(null);
+  const [rhLoading,setRhLoading]=useState(true);
   const [dias,setDias]=useState<Array<{id:string;data:string;descricao:string;tipo:string;abrangencia:string;estado:string|null;municipio:string|null;ativo:boolean}>>([]);
   const [anoStatus,setAnoStatus]=useState<{completo:boolean}|null>(null);
   const [ano,setAno]=useState(new Date().getFullYear()); const [mensagem,setMensagem]=useState("");
@@ -1312,13 +1354,12 @@ export function ConfiguracoesRH({ secao }: { secao?: "rh" | "calendario" } = {})
       supabase.rpc("ro_admin_user_search",{p_search:busca}),
       supabase.from("ro_calendario_nao_util").select("id,data,descricao,tipo,abrangencia,estado,municipio,ativo").gte("data",`${ano}-01-01`).lte("data",`${ano}-12-31`).order("data"),
       supabase.from("ro_calendario_anos").select("completo").eq("ano",ano).maybeSingle(),
-    ]); const perfis=(u.data||[]) as Perfil[]; setUsuarios(perfis); setRh((r.data||[]).map((x)=>({...x,perfil:perfis.find((p)=>p.id===x.user_id)}))); setDias(c.data||[]); setAnoStatus(a.data);
+    ]); const perfis=(u.data||[]) as Perfil[]; setUsuarios(perfis); setRh((r.data||[]).map((x)=>({...x,perfil:perfis.find((p)=>p.id===x.user_id)}))); setDias(c.data||[]); setAnoStatus(a.data); setRhLoading(false);
   },[ano,busca]);
   useEffect(()=>{carregar();},[carregar]);
-  async function salvarRh(userId:string,ativo:boolean){const {error}=await supabase.from("ro_rh_responsaveis").upsert({user_id:userId,ativo},{onConflict:"user_id"});setMensagem(error?"Não foi possível alterar a equipe RH.":"Equipe RH atualizada.");await carregar();}
+  async function salvarRh(userId:string,ativo:boolean,busyId:string){if(rhBusy)return;setRhBusy(busyId);const {error}=await supabase.from("ro_rh_responsaveis").upsert({user_id:userId,ativo},{onConflict:"user_id"});setMensagem(error?"Não foi possível alterar a equipe RH.":"Equipe RH atualizada.");if(!error&&busyId==="add")setSelectedRh("");await carregar();setRhBusy(null);}
   async function adicionarDia(e:React.FormEvent){e.preventDefault();const local=novo.abrangencia==="estadual"?{estado:"SP",municipio:null}:novo.abrangencia==="municipal"?{estado:"SP",municipio:"Rio Claro"}:{estado:null,municipio:null};const {error}=await supabase.from("ro_calendario_nao_util").insert({...novo,...local});setMensagem(error?"Não foi possível cadastrar a data.":"O calendário foi alterado. Revise as datas e valide novamente o ano.");await carregar();}
   async function validarAno(completo:boolean){const {error}=await supabase.from("ro_calendario_anos").upsert({ano,completo},{onConflict:"ano"});setMensagem(error?"Não foi possível validar o ano.":completo?"Ano validado.":"Ano marcado como incompleto.");await carregar();}
-  const candidatos=usuarios.slice(0,20);
   async function editarDescricao(id:string,atual:string){const descricao=window.prompt("Nova descrição",atual)?.trim();if(!descricao)return;await supabase.from("ro_calendario_nao_util").update({descricao}).eq("id",id);await carregar();}
   async function alternarDia(id:string,ativo:boolean){const {error}=await supabase.from("ro_calendario_nao_util").update({ativo:!ativo}).eq("id",id);setMensagem(error?"Não foi possível alterar a data.":"O calendário foi alterado. Revise as datas e valide novamente o ano.");await carregar();}
   const ativos=dias.filter((d)=>d.ativo).length; const pendentes=dias.length-ativos;
@@ -1327,7 +1368,7 @@ export function ConfiguracoesRH({ secao }: { secao?: "rh" | "calendario" } = {})
   const conteudo = <>
     {!secao && <div className="actions"><button className={`btn ${aba==="rh"?"primary":"secondary"}`} onClick={()=>setAbaInterna("rh")}>Equipe RH</button><button className={`btn ${aba==="calendario"?"primary":"secondary"}`} onClick={()=>setAbaInterna("calendario")}>Calendário de dias não úteis</button></div>}
     {mensagem&&<div className="alert">{mensagem}</div>}
-    {aba==="rh"?<><div className="card form"><label className="wide">Pesquisar usuário cadastrado<input value={busca} onChange={(e)=>setBusca(e.target.value)} placeholder="Nome ou e-mail"/></label>{busca&&candidatos.map((u)=><div className="wide actions" key={u.id}><span>{u.full_name||u.email}</span><button className="btn secondary" onClick={()=>salvarRh(u.id,true)}>Incluir/ativar</button></div>)}</div><div className="card"><h2>Integrantes</h2>{rh.length?rh.map((r)=><div className="actions" key={r.user_id}><span>{r.perfil?.full_name||r.perfil?.email||r.user_id} — {r.ativo?"Ativo":"Inativo"}</span><button className="btn secondary" onClick={()=>salvarRh(r.user_id,!r.ativo)}>{r.ativo?"Desativar":"Ativar"}</button></div>):<Empty text="Nenhum integrante RH cadastrado."/>}</div></>:<><div className="card calendar-toolbar"><label>Ano<input type="number" value={ano} onChange={(e)=>setAno(Number(e.target.value))}/></label><div className="calendar-summary"><strong>{dias.length} datas cadastradas</strong><span>{ativos} ativas</span><span>{pendentes} pendentes</span><span className={`badge ${anoStatus?.completo?"calendar-active":"calendar-pending"}`}>Ano {ano} {anoStatus?.completo?"validado":"incompleto"}</span></div><div className="actions"><button className="btn primary" onClick={()=>validarAno(true)}>Marcar ano como validado</button><button className="btn secondary" onClick={()=>validarAno(false)}>Marcar incompleto</button></div></div><form className="card form" onSubmit={adicionarDia}><h2 className="wide">Adicionar data excepcional</h2><label>Data *<input type="date" required value={novo.data} onChange={(e)=>setNovo({...novo,data:e.target.value})}/></label><label>Descrição *<input required value={novo.descricao} onChange={(e)=>setNovo({...novo,descricao:e.target.value})}/></label><label>Tipo<select value={novo.tipo} onChange={(e)=>setNovo({...novo,tipo:e.target.value})}><option value="feriado">Feriado</option><option value="ponto_facultativo">Ponto facultativo / dia-ponte</option><option value="convencao_coletiva">Convenção coletiva</option><option value="recesso">Recesso</option></select></label><label>Abrangência<select value={novo.abrangencia} onChange={(e)=>setNovo({...novo,abrangencia:e.target.value})}><option value="nacional">Nacional</option><option value="estadual">Estadual — SP</option><option value="municipal">Municipal — Rio Claro/SP</option><option value="empresa">Empresa</option></select></label><button className="btn primary">Cadastrar</button></form><div className="card calendar-list">{dias.length?dias.map((d)=><div className={`calendar-row ${d.tipo==="recesso"&&!d.ativo?"calendar-recess-pending":""}`} key={d.id}><div><strong>{data(d.data)} — {d.descricao}</strong><small>{tipoLabel[d.tipo]||d.tipo} · {abrangenciaLabel[d.abrangencia]||d.abrangencia}</small></div><span className={`badge ${d.ativo?"calendar-active":"calendar-pending"}`}>{d.ativo?"Ativo":"Pendente/Inativo"}</span><div className="actions"><button className="btn secondary" onClick={()=>editarDescricao(d.id,d.descricao)}>Editar descrição</button><button className="btn secondary" onClick={()=>alternarDia(d.id,d.ativo)}>{d.ativo?"Desativar":"Ativar"}</button></div></div>):<Empty text="Nenhuma data cadastrada para este ano."/>}</div></>}
+    {aba==="rh"?<ResponsibleAdminSection users={usuarios} rows={rh.map((row)=>({id:row.user_id,user_id:row.user_id,ativo:row.ativo}))} selected={selectedRh} onSelect={setSelectedRh} onSearch={setBusca} onAdd={()=>selectedRh&&!rh.some((row)=>row.user_id===selectedRh)&&salvarRh(selectedRh,true,"add")} onToggle={(row)=>salvarRh(row.user_id,!row.ativo,row.id)} busy={rhBusy} loading={rhLoading} emptyText="Nenhum responsável RH cadastrado."/>:<><div className="card calendar-toolbar"><label>Ano<input type="number" value={ano} onChange={(e)=>setAno(Number(e.target.value))}/></label><div className="calendar-summary"><strong>{dias.length} datas cadastradas</strong><span>{ativos} ativas</span><span>{pendentes} pendentes</span><span className={`badge ${anoStatus?.completo?"calendar-active":"calendar-pending"}`}>Ano {ano} {anoStatus?.completo?"validado":"incompleto"}</span></div><div className="actions"><button className="btn primary" onClick={()=>validarAno(true)}>Marcar ano como validado</button><button className="btn secondary" onClick={()=>validarAno(false)}>Marcar incompleto</button></div></div><form className="card form" onSubmit={adicionarDia}><h2 className="wide">Adicionar data excepcional</h2><label>Data *<input type="date" required value={novo.data} onChange={(e)=>setNovo({...novo,data:e.target.value})}/></label><label>Descrição *<input required value={novo.descricao} onChange={(e)=>setNovo({...novo,descricao:e.target.value})}/></label><label>Tipo<select value={novo.tipo} onChange={(e)=>setNovo({...novo,tipo:e.target.value})}><option value="feriado">Feriado</option><option value="ponto_facultativo">Ponto facultativo / dia-ponte</option><option value="convencao_coletiva">Convenção coletiva</option><option value="recesso">Recesso</option></select></label><label>Abrangência<select value={novo.abrangencia} onChange={(e)=>setNovo({...novo,abrangencia:e.target.value})}><option value="nacional">Nacional</option><option value="estadual">Estadual — SP</option><option value="municipal">Municipal — Rio Claro/SP</option><option value="empresa">Empresa</option></select></label><button className="btn primary">Cadastrar</button></form><div className="card calendar-list">{dias.length?dias.map((d)=><div className={`calendar-row ${d.tipo==="recesso"&&!d.ativo?"calendar-recess-pending":""}`} key={d.id}><div><strong>{data(d.data)} — {d.descricao}</strong><small>{tipoLabel[d.tipo]||d.tipo} · {abrangenciaLabel[d.abrangencia]||d.abrangencia}</small></div><span className={`badge ${d.ativo?"calendar-active":"calendar-pending"}`}>{d.ativo?"Ativo":"Pendente/Inativo"}</span><div className="actions"><button className="btn secondary" onClick={()=>editarDescricao(d.id,d.descricao)}>Editar descrição</button><button className="btn secondary" onClick={()=>alternarDia(d.id,d.ativo)}>{d.ativo?"Desativar":"Ativar"}</button></div></div>):<Empty text="Nenhuma data cadastrada para este ano."/>}</div></>}
   </>;
   return secao ? conteudo : <Page title="Configurações de RH" subtitle="Acesso exclusivo da administradora Fernanda">{conteudo}</Page>;
 }
@@ -2787,43 +2828,16 @@ export function Responsaveis({ embedded = false }: { embedded?: boolean } = {}) 
       .eq("id", id);
     load();
   }
-  const conteudo = <>
-      <div className="card add-ro">
-        <Users />
-        <select value={selected} onChange={(e) => setSelected(e.target.value)}>
-          <option value="">Selecione um usuário</option>
-          {profiles.map((p) => (
-            <option key={p.id} value={p.id}>
-              {p.full_name || p.id}
-            </option>
-          ))}
-        </select>
-        <button className="btn primary" onClick={add}>
-          <Plus size={17} />
-          Adicionar
-        </button>
-      </div>
-      <div className="card ro-list">
-        {rows.map((r) => {
-          const perfil = profiles.find((p) => p.id === r.user_id);
-          return (
-            <div key={r.id}>
-              <div>
-                <strong>{perfil?.full_name || r.user_id}</strong>
-                <small>
-                  {r.ativo ? "Responsável ativo" : "Responsável inativo"}
-                </small>
-              </div>
-              <button
-                className={`btn ${r.ativo ? "danger" : "secondary"}`}
-                onClick={() => toggle(r.id, r.ativo)}
-              >
-                {r.ativo ? "Inativar" : "Reativar"}
-              </button>
-            </div>
-          );
-        })}
-      </div>
-  </>;
+  const conteudo = <ResponsibleAdminSection
+    users={profiles}
+    rows={rows}
+    selected={selected}
+    onSelect={setSelected}
+    onAdd={add}
+    onToggle={(row) => toggle(row.id, row.ativo)}
+    busy={null}
+    loading={false}
+    emptyText="Nenhum responsável RO cadastrado."
+  />;
   return embedded ? conteudo : <Page title="Responsáveis RO" subtitle="Gerencie quem recebe e processa solicitações">{conteudo}</Page>;
 }
