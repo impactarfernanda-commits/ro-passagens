@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import {
   Link,
+  useLocation,
   useNavigate,
   useParams,
   useSearchParams,
@@ -42,6 +43,7 @@ import { deduplicateNotifications } from "./notifications";
 import { buildPurchaseCosts, totalTicketValues } from "./purchaseCosts";
 import { supabase } from "./supabase";
 import { calcularDataMinima, categoriaDocumento, dataMinimaDoInput, limparDataIdaInvalida, mensagemAntecedencia, motivosPermitidos, regraPrazo } from "./passagemRules";
+import { motivoPrefillPermitido, motivoRecusaValido, podeRecusarSolicitacao, statusContaComoAberto } from "./recusaRules";
 import type {
   Anexo,
   Custo,
@@ -324,7 +326,7 @@ export function Dashboard({ access }: { access: Access }) {
     );
   });
   const abertas = rows.filter(
-    (r) => !["passagem_comprada", "finalizada", "cancelada"].includes(r.status),
+    (r) => statusContaComoAberto(r.status),
   );
   const atrasadas = abertas.filter((r) => {
     const ida = new Date(`${r.data_ida}T00:00:00`);
@@ -937,6 +939,7 @@ export function Solicitacoes({
 export function NovaSolicitacao({ userId, access }: { userId: string; access: Access }) {
   const { funcionarios, obras } = useCatalogos();
   const nav = useNavigate();
+  const location = useLocation();
   const [busy, setBusy] = useState(false);
   const [erro, setErro] = useState("");
   const [solicitante, setSolicitante] = useState("");
@@ -959,6 +962,7 @@ export function NovaSolicitacao({ userId, access }: { userId: string; access: Ac
     centro_custo_destino_id: "",
     justificativa_excecao_prazo: "",
     observacoes_solicitante: "",
+    solicitacao_origem_id: "",
   });
   useEffect(() => {
     supabase
@@ -977,6 +981,18 @@ export function NovaSolicitacao({ userId, access }: { userId: string; access: Ac
       supabase.from("ro_calendario_anos").select("ano,completo"),
     ]).then(([dias, anos]) => { setDiasNaoUteis(dias.data || []); setAnosCalendario(anos.data || []); });
   }, [userId]);
+  useEffect(()=>{
+    const origem=(location.state as {refazer?:string}|null)?.refazer;
+    if(!origem)return;
+    supabase.rpc("ro_obter_dados_para_refazer_solicitacao",{p_solicitacao_id:origem}).then(({data:prefill,error})=>{
+      if(error||!prefill){setErro("Não foi possível carregar os dados seguros da solicitação recusada.");return;}
+      const p=prefill as Partial<typeof form>;
+      const motivo=motivoPrefillPermitido(p.motivo as Motivo|null,motivosPermitidos(access.role,access.isRh));
+      setForm((atual)=>({...atual,funcionario_id:p.funcionario_id||"",obra_id:p.obra_id||"",origem:p.origem||"",destino:p.destino||"",motivo:motivo as Motivo|"",desligamento_subtipo:motivo==="desligamento"?(p.desligamento_subtipo||"") as DesligamentoSubtipo|"":"",data_ida:p.data_ida||"",data_retorno:p.data_retorno||"",centro_custo_retorno_id:p.centro_custo_retorno_id||"",retorno_indefinido:Boolean(p.retorno_indefinido),centro_custo_destino_id:p.centro_custo_destino_id||"",observacoes_solicitante:p.observacoes_solicitante||"",solicitacao_origem_id:String(prefill.solicitacao_origem_id||origem),justificativa_excecao_prazo:""}));
+      setDocumento(null);
+      if(!motivo&&p.motivo)setErro("O motivo original não está disponível para seu perfil. Selecione outro motivo permitido.");
+    });
+  },[access.isRh,access.role,location.state]);
   const regra = regraPrazo(form.motivo || null, form.desligamento_subtipo || null);
   const calculo = calcularDataMinima(new Date(), regra.tipo, regra.quantidade, diasNaoUteis, anosCalendario);
   const idaMinima = calculo.data;
@@ -1298,7 +1314,7 @@ export function ConfiguracoesRH() {
   </Page>;
 }
 
-export function Detalhe({ access }: { access: Access }) {
+export function Detalhe({ access, userId }: { access: Access; userId: string }) {
   const { id } = useParams();
   const [row, setRow] = useState<Solicitacao | null>(null);
   const [loading, setLoading] = useState(true);
@@ -1321,6 +1337,7 @@ export function Detalhe({ access }: { access: Access }) {
           const ids = [
             found.solicitante_id,
             responsavelId,
+            found.recusada_por,
             ...anexos.map(criadorAnexoId),
           ].filter(Boolean) as string[];
           const { data: labels } = await supabase.rpc("ro_user_labels", {
@@ -1342,6 +1359,9 @@ export function Detalhe({ access }: { access: Access }) {
             },
             responsavel_ro_nome: responsavelId
               ? labelMap.get(responsavelId) || "Responsável sem identificação"
+              : null,
+            recusada_por_nome: found.recusada_por
+              ? labelMap.get(found.recusada_por) || "Integrante RO sem identificação"
               : null,
             anexos: anexos.map((a) => ({
               ...a,
@@ -1392,6 +1412,7 @@ export function Detalhe({ access }: { access: Access }) {
           </span>
         )}
       </div>
+      {row.status === "recusada" && <section className="card rejection-summary"><h2>Solicitação recusada</h2><DT t="Motivo" v={row.motivo_recusa} /><DT t="Recusada por" v={(row as Solicitacao & {recusada_por_nome?:string|null}).recusada_por_nome} /><DT t="Data" v={dataHora(row.recusada_em)} /></section>}
       <section className="card detail request-data">
         <h2>Dados da solicitação</h2>
         <dl>
@@ -1441,10 +1462,12 @@ export function Detalhe({ access }: { access: Access }) {
         </dl>
       </section>
       {(access.isRh||access.isRO||access.isAdmin)&&documentosInternos.length>0&&<section className="card"><h2>Documentos internos restritos</h2>{documentosInternos.map((d)=><div className="actions" key={d.id}><span>{d.categoria==="termo_justa_causa"?"Termo de justa causa":"Carta de pedido de demissão"}</span>{d.url&&<a className="btn secondary" href={d.url} target="_blank" rel="noreferrer">Abrir PDF</a>}</div>)}</section>}
+      {access.canOperateRO && <RecusarSolicitacao row={row} onDone={load} />}
+      {row.status === "recusada" && row.solicitante_id === userId && <div className="actions rejection-recreate"><Link className="btn primary" to="/nova" state={{refazer:row.id}}>Criar nova a partir desta</Link></div>}
       {access.canOperateRO && row.status === "solicitada" && (
         <Assumir row={row} onDone={load} />
       )}
-      {access.canOperateRO && row.status !== "solicitada" && (
+      {access.canOperateRO && !["solicitada","recusada"].includes(row.status) && (
         <Operacoes row={row} onDone={load} />
       )}
       {access.canOperateRO &&
@@ -1504,6 +1527,28 @@ export function Detalhe({ access }: { access: Access }) {
     </Page>
   );
 }
+function RecusarSolicitacao({row,onDone}:{row:Solicitacao;onDone:()=>void}) {
+  const [aberto,setAberto]=useState(false);
+  const [motivo,setMotivo]=useState("");
+  const [busy,setBusy]=useState(false);
+  const [erro,setErro]=useState("");
+  if(!podeRecusarSolicitacao(true,row))return null;
+  const util=motivo.trim();
+  async function confirmar(){
+    if(busy||!motivoRecusaValido(util))return;
+    setBusy(true);setErro("");
+    const {error}=await supabase.rpc("ro_recusar_solicitacao",{p_solicitacao_id:row.id,p_motivo:util});
+    if(error){
+      const mensagens:Record<string,string>={NAO_PERTENCE_EQUIPE_RO:"Somente integrantes ativos da equipe RO podem recusar.",SOLICITACAO_NAO_ENCONTRADA:"Solicitação não encontrada.",SOLICITACAO_JA_RECUSADA:"Esta solicitação já foi recusada.",PASSAGEM_JA_COMPRADA:"A passagem já foi comprada e não pode mais ser recusada.",STATUS_NAO_PERMITE_RECUSA:"O status atual não permite recusa.",MOTIVO_RECUSA_OBRIGATORIO:"Informe ao menos 10 caracteres úteis."};
+      setErro(Object.entries(mensagens).find(([codigo])=>error.message.includes(codigo))?.[1]||"Não foi possível recusar a solicitação.");setBusy(false);return;
+    }
+    setAberto(false);setMotivo("");setBusy(false);onDone();
+  }
+  return <>
+    <section className="card rejection-action"><h2>Análise imediata</h2><p>Se houver dados ou documentos incorretos, recuse antes de registrar a compra.</p><button className="btn danger" onClick={()=>setAberto(true)}>Recusar solicitação</button></section>
+    {aberto&&<div className="rejection-backdrop" role="dialog" aria-modal="true" aria-labelledby="rejection-title"><div className="rejection-modal"><h2 id="rejection-title">Recusar solicitação</h2><div className="error">Esta ação é definitiva. O solicitante precisará criar uma nova solicitação com os dados corrigidos.</div>{erro&&<div className="error">{erro}</div>}<label>Motivo da recusa *<textarea rows={5} value={motivo} onChange={(e)=>setMotivo(e.target.value)} autoFocus/><small>{util.length}/10 caracteres mínimos</small></label><div className="actions"><button className="btn secondary" disabled={busy} onClick={()=>{setAberto(false);setErro("");}}>Cancelar</button><button className="btn danger" disabled={busy||!motivoRecusaValido(util)} onClick={confirmar}>{busy?"Recusando...":"Confirmar recusa"}</button></div></div></div>}
+  </>;
+}
 function Assumir({ row, onDone }: { row: Solicitacao; onDone: () => void }) {
   const [busy, setBusy] = useState(false);
   const [erro, setErro] = useState("");
@@ -1555,7 +1600,7 @@ function Operacoes({ row, onDone }: { row: Solicitacao; onDone: () => void }) {
     setBusy(false);
     if (!error) onDone();
   }
-  if (["finalizada", "cancelada"].includes(row.status)) return null;
+  if (["finalizada", "cancelada", "recusada"].includes(row.status)) return null;
   return (
     <section className="card operations">
       <h2>Ações operacionais</h2>
