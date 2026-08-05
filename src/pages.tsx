@@ -1297,8 +1297,9 @@ export function NovaSolicitacao({ userId, access }: { userId: string; access: Ac
   );
 }
 
-export function ConfiguracoesRH() {
-  const [aba,setAba]=useState<"rh"|"calendario">("rh");
+export function ConfiguracoesRH({ secao }: { secao?: "rh" | "calendario" } = {}) {
+  const [abaInterna,setAbaInterna]=useState<"rh"|"calendario">("rh");
+  const aba = secao || abaInterna;
   const [rh,setRh]=useState<Array<{user_id:string;ativo:boolean;perfil?:Perfil}>>([]);
   const [usuarios,setUsuarios]=useState<Perfil[]>([]); const [busca,setBusca]=useState("");
   const [dias,setDias]=useState<Array<{id:string;data:string;descricao:string;tipo:string;abrangencia:string;estado:string|null;municipio:string|null;ativo:boolean}>>([]);
@@ -1323,10 +1324,66 @@ export function ConfiguracoesRH() {
   const ativos=dias.filter((d)=>d.ativo).length; const pendentes=dias.length-ativos;
   const tipoLabel:Record<string,string>={feriado:"Feriado",ponto_facultativo:"Ponto facultativo / dia-ponte",convencao_coletiva:"Convenção coletiva",recesso:"Recesso"};
   const abrangenciaLabel:Record<string,string>={nacional:"Nacional",estadual:"Estadual — SP",municipal:"Municipal — Rio Claro/SP",empresa:"Empresa"};
-  return <Page title="Configurações de RH" subtitle="Acesso exclusivo da administradora Fernanda">
-    <div className="actions"><button className={`btn ${aba==="rh"?"primary":"secondary"}`} onClick={()=>setAba("rh")}>Equipe RH</button><button className={`btn ${aba==="calendario"?"primary":"secondary"}`} onClick={()=>setAba("calendario")}>Calendário de dias não úteis</button></div>
+  const conteudo = <>
+    {!secao && <div className="actions"><button className={`btn ${aba==="rh"?"primary":"secondary"}`} onClick={()=>setAbaInterna("rh")}>Equipe RH</button><button className={`btn ${aba==="calendario"?"primary":"secondary"}`} onClick={()=>setAbaInterna("calendario")}>Calendário de dias não úteis</button></div>}
     {mensagem&&<div className="alert">{mensagem}</div>}
     {aba==="rh"?<><div className="card form"><label className="wide">Pesquisar usuário cadastrado<input value={busca} onChange={(e)=>setBusca(e.target.value)} placeholder="Nome ou e-mail"/></label>{busca&&candidatos.map((u)=><div className="wide actions" key={u.id}><span>{u.full_name||u.email}</span><button className="btn secondary" onClick={()=>salvarRh(u.id,true)}>Incluir/ativar</button></div>)}</div><div className="card"><h2>Integrantes</h2>{rh.length?rh.map((r)=><div className="actions" key={r.user_id}><span>{r.perfil?.full_name||r.perfil?.email||r.user_id} — {r.ativo?"Ativo":"Inativo"}</span><button className="btn secondary" onClick={()=>salvarRh(r.user_id,!r.ativo)}>{r.ativo?"Desativar":"Ativar"}</button></div>):<Empty text="Nenhum integrante RH cadastrado."/>}</div></>:<><div className="card calendar-toolbar"><label>Ano<input type="number" value={ano} onChange={(e)=>setAno(Number(e.target.value))}/></label><div className="calendar-summary"><strong>{dias.length} datas cadastradas</strong><span>{ativos} ativas</span><span>{pendentes} pendentes</span><span className={`badge ${anoStatus?.completo?"calendar-active":"calendar-pending"}`}>Ano {ano} {anoStatus?.completo?"validado":"incompleto"}</span></div><div className="actions"><button className="btn primary" onClick={()=>validarAno(true)}>Marcar ano como validado</button><button className="btn secondary" onClick={()=>validarAno(false)}>Marcar incompleto</button></div></div><form className="card form" onSubmit={adicionarDia}><h2 className="wide">Adicionar data excepcional</h2><label>Data *<input type="date" required value={novo.data} onChange={(e)=>setNovo({...novo,data:e.target.value})}/></label><label>Descrição *<input required value={novo.descricao} onChange={(e)=>setNovo({...novo,descricao:e.target.value})}/></label><label>Tipo<select value={novo.tipo} onChange={(e)=>setNovo({...novo,tipo:e.target.value})}><option value="feriado">Feriado</option><option value="ponto_facultativo">Ponto facultativo / dia-ponte</option><option value="convencao_coletiva">Convenção coletiva</option><option value="recesso">Recesso</option></select></label><label>Abrangência<select value={novo.abrangencia} onChange={(e)=>setNovo({...novo,abrangencia:e.target.value})}><option value="nacional">Nacional</option><option value="estadual">Estadual — SP</option><option value="municipal">Municipal — Rio Claro/SP</option><option value="empresa">Empresa</option></select></label><button className="btn primary">Cadastrar</button></form><div className="card calendar-list">{dias.length?dias.map((d)=><div className={`calendar-row ${d.tipo==="recesso"&&!d.ativo?"calendar-recess-pending":""}`} key={d.id}><div><strong>{data(d.data)} — {d.descricao}</strong><small>{tipoLabel[d.tipo]||d.tipo} · {abrangenciaLabel[d.abrangencia]||d.abrangencia}</small></div><span className={`badge ${d.ativo?"calendar-active":"calendar-pending"}`}>{d.ativo?"Ativo":"Pendente/Inativo"}</span><div className="actions"><button className="btn secondary" onClick={()=>editarDescricao(d.id,d.descricao)}>Editar descrição</button><button className="btn secondary" onClick={()=>alternarDia(d.id,d.ativo)}>{d.ativo?"Desativar":"Ativar"}</button></div></div>):<Empty text="Nenhuma data cadastrada para este ano."/>}</div></>}
+  </>;
+  return secao ? conteudo : <Page title="Configurações de RH" subtitle="Acesso exclusivo da administradora Fernanda">{conteudo}</Page>;
+}
+
+type AbaConfiguracoes = "responsaveis-ro" | "responsaveis-rh" | "calendario" | "importacoes";
+const ABAS_CONFIGURACOES: Array<{ id: AbaConfiguracoes; label: string }> = [
+  { id: "responsaveis-ro", label: "Responsáveis RO" },
+  { id: "responsaveis-rh", label: "Responsáveis RH" },
+  { id: "calendario", label: "Calendário da empresa" },
+  { id: "importacoes", label: "Importações" },
+];
+
+export function Configuracoes() {
+  const [params, setParams] = useSearchParams();
+  const solicitada = params.get("aba");
+  const aba = ABAS_CONFIGURACOES.some(({ id }) => id === solicitada)
+    ? solicitada as AbaConfiguracoes
+    : "responsaveis-ro";
+  const tipo = params.get("tipo") === "centros-custo" ? "centros-custo" : "funcionarios";
+
+  function selecionarAba(proxima: AbaConfiguracoes) {
+    const next = new URLSearchParams({ aba: proxima });
+    if (proxima === "importacoes") next.set("tipo", tipo);
+    setParams(next, { replace: true });
+  }
+  function navegarTeclado(event: React.KeyboardEvent<HTMLButtonElement>, index: number) {
+    if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+    event.preventDefault();
+    const destino = event.key === 'Home' ? 0 : event.key === 'End' ? ABAS_CONFIGURACOES.length - 1
+      : (index + (event.key === 'ArrowRight' ? 1 : -1) + ABAS_CONFIGURACOES.length) % ABAS_CONFIGURACOES.length;
+    selecionarAba(ABAS_CONFIGURACOES[destino].id);
+    requestAnimationFrame(() => document.getElementById(`aba-${ABAS_CONFIGURACOES[destino].id}`)?.focus());
+  }
+
+  return <Page title="Configurações" subtitle="Administração do RO Passagens">
+    <div className="settings-tabs" role="tablist" aria-label="Seções de configurações">
+      {ABAS_CONFIGURACOES.map((item, index) => <button
+        id={`aba-${item.id}`} key={item.id} type="button" role="tab"
+        aria-selected={aba === item.id} aria-controls="painel-configuracoes"
+        tabIndex={aba === item.id ? 0 : -1} className={aba === item.id ? "active" : ""}
+        onClick={() => selecionarAba(item.id)} onKeyDown={(event) => navegarTeclado(event, index)}
+      >{item.label}</button>)}
+    </div>
+    <section id="painel-configuracoes" className="settings-panel" role="tabpanel" aria-labelledby={`aba-${aba}`}>
+      {aba === "responsaveis-ro" && <Responsaveis embedded />}
+      {aba === "responsaveis-rh" && <ConfiguracoesRH secao="rh" />}
+      {aba === "calendario" && <ConfiguracoesRH secao="calendario" />}
+      {aba === "importacoes" && <div className="settings-imports">
+        <div className="settings-subtabs" aria-label="Tipo de importação">
+          <button type="button" className={`btn ${tipo === "funcionarios" ? "primary" : "secondary"}`} onClick={() => setParams({ aba: "importacoes", tipo: "funcionarios" }, { replace: true })}>Funcionários</button>
+          <button type="button" className={`btn ${tipo === "centros-custo" ? "primary" : "secondary"}`} onClick={() => setParams({ aba: "importacoes", tipo: "centros-custo" }, { replace: true })}>Centros de custo</button>
+        </div>
+        <div hidden={tipo !== "funcionarios"}><ImportacaoFuncionarios embedded /></div>
+        <div hidden={tipo !== "centros-custo"}><ImportacaoCentrosCusto embedded /></div>
+      </div>}
+    </section>
   </Page>;
 }
 
@@ -2571,7 +2628,7 @@ function prepareCostCenterRows(rows: unknown[][]) {
   }));
 }
 
-export function ImportacaoCentrosCusto() {
+export function ImportacaoCentrosCusto({ embedded = false }: { embedded?: boolean } = {}) {
   const [arquivo, setArquivo] = useState<File | null>(null);
   const [linhas, setLinhas] = useState<CostCenterImportRow[]>([]);
   const [resultado, setResultado] = useState<CostCenterImportResult | null>(null);
@@ -2607,7 +2664,8 @@ export function ImportacaoCentrosCusto() {
     setBusy(false);
   }
 
-  return <Page title="Importar centros de custo" subtitle="Área restrita da administradora do sistema">
+  const conteudo = <>
+    {embedded && <h2>Centros de custo</h2>}
     <section className="card form">
       <div className="wide">
         <p><strong>Importe uma planilha sem cabeçalho, com:</strong><br/>Coluna A = Código<br/>Coluna B = Descrição</p>
@@ -2623,10 +2681,11 @@ export function ImportacaoCentrosCusto() {
       </div>}
       <div className="actions wide"><button className="btn primary" type="button" disabled={busy || linhas.length === 0} onClick={importar}>{busy ? "Importando..." : "Importar centros de custo"}</button></div>
     </section>
-  </Page>;
+  </>;
+  return embedded ? conteudo : <Page title="Importar centros de custo" subtitle="Área restrita da administradora do sistema">{conteudo}</Page>;
 }
 
-export function ImportacaoFuncionarios() {
+export function ImportacaoFuncionarios({ embedded = false }: { embedded?: boolean } = {}) {
   const [arquivo, setArquivo] = useState<File | null>(null);
   const [linhas, setLinhas] = useState<Array<{ linha: number; nome: string }>>([]);
   const [resultado, setResultado] = useState<ImportResult | null>(null);
@@ -2673,7 +2732,8 @@ export function ImportacaoFuncionarios() {
     setBusy(false);
   }
 
-  return <Page title="Importar funcionários" subtitle="Área restrita da administradora do sistema">
+  const conteudo = <>
+    {embedded && <h2>Funcionários</h2>}
     <section className="card form">
       <div className="wide">
         <p><strong>Importe uma planilha XLSX sem cabeçalho, com:</strong><br/>Coluna A = Nome do funcionário</p>
@@ -2687,10 +2747,11 @@ export function ImportacaoFuncionarios() {
       {resultado&&<div className="success wide"><strong>Importação concluída.</strong><p>{resultado.importados} importados · {resultado.atualizados} atualizados · {resultado.ignorados} ignorados · {resultado.erros.length} erros</p>{resultado.erros.length>0&&<div className="table-wrap"><table><thead><tr><th>Linha</th><th>Nome</th><th>Motivo</th></tr></thead><tbody>{resultado.erros.map((item,index)=><tr key={`${item.linha}-${item.nome}-${index}`}><td>{item.linha}</td><td>{item.nome||"—"}</td><td>{item.motivo}</td></tr>)}</tbody></table></div>}</div>}
       <div className="actions wide"><button className="btn primary" type="button" disabled={busy||linhas.length===0} onClick={importar}>{busy?"Importando...":"Importar funcionários"}</button></div>
     </section>
-  </Page>;
+  </>;
+  return embedded ? conteudo : <Page title="Importar funcionários" subtitle="Área restrita da administradora do sistema">{conteudo}</Page>;
 }
 
-export function Responsaveis() {
+export function Responsaveis({ embedded = false }: { embedded?: boolean } = {}) {
   const [rows, setRows] = useState<
     { id: string; user_id: string; ativo: boolean }[]
   >([]);
@@ -2726,11 +2787,7 @@ export function Responsaveis() {
       .eq("id", id);
     load();
   }
-  return (
-    <Page
-      title="Responsáveis RO"
-      subtitle="Gerencie quem recebe e processa solicitações"
-    >
+  const conteudo = <>
       <div className="card add-ro">
         <Users />
         <select value={selected} onChange={(e) => setSelected(e.target.value)}>
@@ -2767,6 +2824,6 @@ export function Responsaveis() {
           );
         })}
       </div>
-    </Page>
-  );
+  </>;
+  return embedded ? conteudo : <Page title="Responsáveis RO" subtitle="Gerencie quem recebe e processa solicitações">{conteudo}</Page>;
 }

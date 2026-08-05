@@ -6,12 +6,9 @@ import { Header, Sidebar, Spinner } from "./components";
 import {
   Dashboard,
   Detalhe,
-  ImportacaoCentrosCusto,
-  ImportacaoFuncionarios,
   Login,
   NovaSolicitacao,
-  Responsaveis,
-  ConfiguracoesRH,
+  Configuracoes,
   Solicitacoes,
 } from "./pages";
 import { Portal } from "./Portal";
@@ -115,9 +112,7 @@ export function App() {
               onClose={() => setSide(false)}
               onLogout={() => supabase.auth.signOut()}
               canViewAll={access.canViewAll}
-              admin={access.canManageRO}
-              canImport={access.canImport}
-              canManageRh={access.canManageRh}
+              canConfigure={access.canImport}
             />
             <section className="content">
               <Header onMenu={() => setSide(true)} />
@@ -153,8 +148,12 @@ export function App() {
                   element={<NovaSolicitacao userId={session.user.id} access={access} />}
                 />
                 <Route
+                  path="/configuracoes"
+                  element={access.canImport ? <Configuracoes /> : <Navigate to="/painel" replace />}
+                />
+                <Route
                   path="/configuracoes-rh"
-                  element={access.canManageRh ? <ConfiguracoesRH /> : <Navigate to="/solicitacoes" replace />}
+                  element={<Navigate to="/configuracoes?aba=responsaveis-rh" replace />}
                 />
                 <Route
                   path="/solicitacoes/:id"
@@ -162,35 +161,18 @@ export function App() {
                 />
                 <Route
                   path="/responsaveis"
-                  element={
-                    access.canManageRO ? (
-                      <Responsaveis />
-                    ) : (
-                      <Navigate
-                        to={access.canViewAll ? "/painel" : "/solicitacoes"}
-                        replace
-                      />
-                    )
-                  }
+                  element={<Navigate to="/configuracoes?aba=responsaveis-ro" replace />}
                 />
                 <Route
                   path="/importacao-funcionarios"
                   element={
-                    access.canImport ? (
-                      <ImportacaoFuncionarios />
-                    ) : (
-                      <Navigate to="/solicitacoes" replace />
-                    )
+                    <Navigate to="/configuracoes?aba=importacoes&tipo=funcionarios" replace />
                   }
                 />
                 <Route
                   path="/importacao-centros-custo"
                   element={
-                    access.canImport ? (
-                      <ImportacaoCentrosCusto />
-                    ) : (
-                      <Navigate to="/solicitacoes" replace />
-                    )
+                    <Navigate to="/configuracoes?aba=importacoes&tipo=centros-custo" replace />
                   }
                 />
                 <Route path="*" element={<Navigate to="/" replace />} />
