@@ -44,6 +44,7 @@ import { buildPurchaseCosts, totalTicketValues } from "./purchaseCosts";
 import { supabase } from "./supabase";
 import { calcularDataMinima, categoriaDocumento, dataMinimaDoInput, limparDataIdaInvalida, mensagemAntecedencia, motivosPermitidos, regraPrazo } from "./passagemRules";
 import { motivoPrefillPermitido, motivoRecusaValido, podeRecusarSolicitacao, statusContaComoAberto } from "./recusaRules";
+import { compraFolgaLiberada, dataAntecipaCiclo, folgaFuturaBloqueia, justificativaAntecipacaoValida, SEM_HISTORICO_FOLGA, type CicloFolga } from "./folgaCampoRules";
 import type {
   Anexo,
   Custo,
@@ -948,6 +949,8 @@ export function NovaSolicitacao({ userId, access }: { userId: string; access: Ac
   const [diasNaoUteis, setDiasNaoUteis] = useState<Array<{data:string;ativo:boolean}>>([]);
   const [anosCalendario, setAnosCalendario] = useState<Array<{ano:number;completo:boolean}>>([]);
   const [documento, setDocumento] = useState<File | null>(null);
+  const [cicloFolga,setCicloFolga]=useState<CicloFolga|null>(null);
+  const [cicloLoading,setCicloLoading]=useState(false);
   const [form, setForm] = useState({
     funcionario_id: "",
     obra_id: "",
@@ -963,6 +966,7 @@ export function NovaSolicitacao({ userId, access }: { userId: string; access: Ac
     justificativa_excecao_prazo: "",
     observacoes_solicitante: "",
     solicitacao_origem_id: "",
+    folga_antecipacao_justificativa: "",
   });
   useEffect(() => {
     supabase
@@ -993,6 +997,13 @@ export function NovaSolicitacao({ userId, access }: { userId: string; access: Ac
       if(!motivo&&p.motivo)setErro("O motivo original não está disponível para seu perfil. Selecione outro motivo permitido.");
     });
   },[access.isRh,access.role,location.state]);
+  useEffect(()=>{
+    setCicloFolga(null);
+    setForm((atual)=>atual.motivo==="folga_campo"?atual:{...atual,folga_antecipacao_justificativa:""});
+    if(form.motivo!=="folga_campo"||!form.funcionario_id)return;
+    setCicloLoading(true);
+    supabase.rpc("ro_obter_ciclo_folga_funcionario",{p_funcionario_id:form.funcionario_id}).then(({data,error})=>{setCicloFolga(error?null:data as CicloFolga);if(error)setErro("Não foi possível consultar o ciclo de folga de campo.");setCicloLoading(false);});
+  },[form.funcionario_id,form.motivo]);
   const regra = regraPrazo(form.motivo || null, form.desligamento_subtipo || null);
   const calculo = calcularDataMinima(new Date(), regra.tipo, regra.quantidade, diasNaoUteis, anosCalendario);
   const idaMinima = calculo.data;
@@ -1009,6 +1020,7 @@ export function NovaSolicitacao({ userId, access }: { userId: string; access: Ac
   );
   const foraPrazo =
     Boolean(form.data_ida) && form.data_ida < idaMinima;
+  const folgaAntecipada=form.motivo==="folga_campo"&&dataAntecipaCiclo(form.data_ida,cicloFolga?.proxima_folga_prevista);
   useEffect(() => {
     setForm((atual) => {
       const data_ida = limparDataIdaInvalida(atual.data_ida, dataMinimaInput);
@@ -1056,6 +1068,8 @@ export function NovaSolicitacao({ userId, access }: { userId: string; access: Ac
       setErro("Selecione uma data que atenda à antecedência mínima.");
       return;
     }
+    if(form.motivo==="folga_campo"&&folgaFuturaBloqueia(cicloFolga)){setErro(`Já existe uma solicitação de folga de campo para este funcionário em ${data(cicloFolga?.solicitacao_futura_data)}.`);return;}
+    if(folgaAntecipada&&!justificativaAntecipacaoValida(form.folga_antecipacao_justificativa)){setErro("A justificativa da antecipação deve ter pelo menos 10 caracteres úteis.");return;}
     if (foraPrazo && gerencial && solicitarExcecao && form.justificativa_excecao_prazo.trim().length < 10) {
       setErro(
         "A justificativa da exceção deve ter pelo menos 10 caracteres.",
@@ -1181,6 +1195,7 @@ export function NovaSolicitacao({ userId, access }: { userId: string; access: Ac
         </label>
         {form.motivo === "desligamento" && <label>Tipo de desligamento *<select required value={form.desligamento_subtipo} onChange={(e)=>{setForm({...form,desligamento_subtipo:e.target.value as DesligamentoSubtipo});setDocumento(null);}}><option value="">Selecione</option><option value="programado_outros">Desligamento programado / outros</option><option value="justa_causa">Justa causa</option><option value="pedido_demissao">Pedido de demissão</option><option value="ma_conduta">Má conduta</option></select></label>}
         {mensagemAntecedencia(form.motivo || null, form.desligamento_subtipo || null) && <div className="alert wide">{mensagemAntecedencia(form.motivo || null, form.desligamento_subtipo || null)}</div>}
+        {form.motivo==="folga_campo"&&form.funcionario_id&&<section className="alert wide cycle-info">{cicloLoading?<span>Consultando ciclo...</span>:cicloFolga?.possui_historico?<><strong>Última folga de campo: {data(cicloFolga.ultima_folga_realizada)}</strong><span>Próxima folga prevista: {data(cicloFolga.proxima_folga_prevista)}</span><span>Data recomendada para solicitar: {data(cicloFolga.data_limite_recomendada)}</span></>:<span>{SEM_HISTORICO_FOLGA}</span>}{cicloFolga?.solicitacao_futura_existente_id&&<strong>Já existe uma solicitação de folga de campo para este funcionário em {data(cicloFolga.solicitacao_futura_data)}. Status: {statusLabel[cicloFolga.solicitacao_futura_status as Status]||cicloFolga.solicitacao_futura_status}.</strong>}</section>}
         <label>
           Data de ida *
           <input
@@ -1192,6 +1207,7 @@ export function NovaSolicitacao({ userId, access }: { userId: string; access: Ac
           />
           {dataPrazoErro && <small className="error">Selecione uma data que atenda à antecedência mínima.</small>}
         </label>
+        {folgaAntecipada&&<label className="wide">Justificativa da antecipação *<textarea required minLength={10} rows={3} value={form.folga_antecipacao_justificativa} onChange={(e)=>setForm({...form,folga_antecipacao_justificativa:e.target.value})}/><small>Esta data antecipa o ciclo previsto da folga de campo. A equipe RO deverá aprovar a antecipação antes da compra da passagem.</small></label>}
         {categoriaDocumento(form.desligamento_subtipo || null) && <label className="wide">Documento interno obrigatório — {form.desligamento_subtipo === "justa_causa" ? "Termo de justa causa" : "Carta de pedido de demissão"}<input type="file" accept="application/pdf,.pdf" required onChange={(e)=>setDocumento(e.target.files?.[0] || null)}/><small>Somente PDF, até 10 MB. Acesso interno restrito.</small></label>}
         {exigePrazo && (
           <>
@@ -1338,6 +1354,7 @@ export function Detalhe({ access, userId }: { access: Access; userId: string }) 
             found.solicitante_id,
             responsavelId,
             found.recusada_por,
+            found.folga_antecipacao_analisada_por,
             ...anexos.map(criadorAnexoId),
           ].filter(Boolean) as string[];
           const { data: labels } = await supabase.rpc("ro_user_labels", {
@@ -1363,6 +1380,7 @@ export function Detalhe({ access, userId }: { access: Access; userId: string }) 
             recusada_por_nome: found.recusada_por
               ? labelMap.get(found.recusada_por) || "Integrante RO sem identificação"
               : null,
+            folga_antecipacao_analisada_por_nome: found.folga_antecipacao_analisada_por?labelMap.get(found.folga_antecipacao_analisada_por)||"Integrante RO sem identificação":null,
             anexos: anexos.map((a) => ({
               ...a,
               criado_por_nome:
@@ -1413,6 +1431,7 @@ export function Detalhe({ access, userId }: { access: Access; userId: string }) 
         )}
       </div>
       {row.status === "recusada" && <section className="card rejection-summary"><h2>Solicitação recusada</h2><DT t="Motivo" v={row.motivo_recusa} /><DT t="Recusada por" v={(row as Solicitacao & {recusada_por_nome?:string|null}).recusada_por_nome} /><DT t="Data" v={dataHora(row.recusada_em)} /></section>}
+      {row.motivo==="folga_campo"&&row.folga_antecipada&&<section className="card cycle-detail"><h2>Antecipação de folga de campo</h2><DT t="Data prevista do ciclo" v={data(row.folga_data_prevista_ciclo)}/><DT t="Data antecipada solicitada" v={data(row.data_ida)}/><DT t="Dias antecipados" v={row.folga_data_prevista_ciclo?String(Math.round((new Date(`${row.folga_data_prevista_ciclo}T12:00:00`).getTime()-new Date(`${row.data_ida}T12:00:00`).getTime())/86400000)):null}/><DT t="Justificativa" v={row.folga_antecipacao_justificativa}/><DT t="Status da análise" v={row.folga_antecipacao_status}/>{row.folga_antecipacao_status==="aprovada"&&<><DT t="Analisada por" v={(row as Solicitacao&{folga_antecipacao_analisada_por_nome?:string|null}).folga_antecipacao_analisada_por_nome}/><DT t="Analisada em" v={dataHora(row.folga_antecipacao_analisada_em)}/></>}{access.canOperateRO&&row.folga_antecipacao_status==="pendente"&&<AprovarAntecipacao row={row} onDone={load}/>}</section>}
       <section className="card detail request-data">
         <h2>Dados da solicitação</h2>
         <dl>
@@ -1471,7 +1490,7 @@ export function Detalhe({ access, userId }: { access: Access; userId: string }) 
         <Operacoes row={row} onDone={load} />
       )}
       {access.canOperateRO &&
-        ["em_analise", "em_andamento"].includes(row.status) && (
+        ["em_analise", "em_andamento"].includes(row.status) && compraFolgaLiberada(row.folga_antecipacao_status) && (
           <Compra row={row} onDone={load} />
         )}
       {access.canOperateRO && row.status === "passagem_comprada" && (
@@ -1549,6 +1568,7 @@ function RecusarSolicitacao({row,onDone}:{row:Solicitacao;onDone:()=>void}) {
     {aberto&&<div className="rejection-backdrop" role="dialog" aria-modal="true" aria-labelledby="rejection-title"><div className="rejection-modal"><h2 id="rejection-title">Recusar solicitação</h2><div className="error">Esta ação é definitiva. O solicitante precisará criar uma nova solicitação com os dados corrigidos.</div>{erro&&<div className="error">{erro}</div>}<label>Motivo da recusa *<textarea rows={5} value={motivo} onChange={(e)=>setMotivo(e.target.value)} autoFocus/><small>{util.length}/10 caracteres mínimos</small></label><div className="actions"><button className="btn secondary" disabled={busy} onClick={()=>{setAberto(false);setErro("");}}>Cancelar</button><button className="btn danger" disabled={busy||!motivoRecusaValido(util)} onClick={confirmar}>{busy?"Recusando...":"Confirmar recusa"}</button></div></div></div>}
   </>;
 }
+function AprovarAntecipacao({row,onDone}:{row:Solicitacao;onDone:()=>void}){const[busy,setBusy]=useState(false);const[erro,setErro]=useState("");async function aprovar(){if(busy)return;setBusy(true);const{error}=await supabase.rpc("ro_aprovar_antecipacao_folga",{p_solicitacao_id:row.id});setErro(error?"Não foi possível aprovar a antecipação.":"");setBusy(false);if(!error)onDone();}return <div className="wide">{erro&&<div className="error">{erro}</div>}<button className="btn primary" disabled={busy} onClick={aprovar}>{busy?"Aprovando...":"Aprovar antecipação"}</button></div>}
 function Assumir({ row, onDone }: { row: Solicitacao; onDone: () => void }) {
   const [busy, setBusy] = useState(false);
   const [erro, setErro] = useState("");
