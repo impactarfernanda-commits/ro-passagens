@@ -158,7 +158,7 @@ export function App() {
                 />
                 <Route
                   path="/solicitacoes/:id"
-                  element={<Detalhe access={access} />}
+                  element={<Detalhe access={access} userId={session.user.id} />}
                 />
                 <Route
                   path="/responsaveis"

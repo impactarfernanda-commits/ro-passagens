@@ -15,7 +15,8 @@ export type Status =
   | "em_andamento"
   | "passagem_comprada"
   | "finalizada"
-  | "cancelada";
+  | "cancelada"
+  | "recusada";
 export type Funcionario = {
   id: string;
   nome: string;
@@ -94,6 +95,10 @@ export type Solicitacao = {
   retorno_indefinido: boolean;
   centro_custo_destino_id: string | null;
   justificativa_excecao_prazo: string | null;
+  solicitacao_origem_id: string | null;
+  recusada_em: string | null;
+  recusada_por: string | null;
+  motivo_recusa: string | null;
   status: Status;
   observacoes_solicitante: string | null;
   observacoes_ro: string | null;

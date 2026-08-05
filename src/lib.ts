@@ -1,13 +1,14 @@
 import type {Motivo,Obra,Status} from './types';
 export const motivoLabel:Record<Motivo,string>={ferias:'Férias',folga_campo:'Folga de campo',desligamento:'Desligamento',transferencia_obra:'Transferência de obra',admissao:'Admissão',inicio_obra:'Início na obra',retorno_obra:'Retorno à obra',recesso:'Recesso',viagem_diretoria:'Viagem diretoria'};
 export const formatMotivoLabel=(motivo?:Motivo|null)=>motivo?motivoLabel[motivo]:'Não se aplica';
-export const statusLabel:Record<Status,string>={solicitada:'Solicitada',em_analise:'Em andamento',em_andamento:'Em andamento',passagem_comprada:'Passagem comprada',finalizada:'Finalizada',cancelada:'Cancelada'};
+export const statusLabel:Record<Status,string>={solicitada:'Solicitada',em_analise:'Em andamento',em_andamento:'Em andamento',passagem_comprada:'Passagem comprada',finalizada:'Finalizada',cancelada:'Cancelada',recusada:'Recusada'};
 export const statusOptions:ReadonlyArray<{value:Exclude<Status,'em_analise'>;label:string}>=[
   {value:'solicitada',label:'Solicitada'},
   {value:'em_andamento',label:'Em andamento'},
   {value:'passagem_comprada',label:'Passagem comprada'},
   {value:'finalizada',label:'Finalizada'},
   {value:'cancelada',label:'Cancelada'},
+  {value:'recusada',label:'Recusada'},
 ];
 export const dinheiro=(v:number)=>new Intl.NumberFormat('pt-BR',{style:'currency',currency:'BRL'}).format(v||0);
 export const data=(v?:string|null)=>v?new Intl.DateTimeFormat('pt-BR').format(new Date(`${v.slice(0,10)}T12:00:00`)):'—';

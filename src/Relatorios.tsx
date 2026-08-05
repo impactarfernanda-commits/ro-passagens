@@ -218,12 +218,12 @@ export function Relatorios() {
         ...(operacional || {}),
         centro_custo_id: centro === "sem-centro" ? null : centro,
         compradas: financeira?.compradas.size || 0,
-        abertas: operacional?.abertas || 0,
+        abertas: solicitacoesAbertas.filter((s)=>(s.obra_id||"sem-centro")===centro).length,
         imprevistos: financeira?.imprevistos.size || 0,
         valor_total: financeira?.valorTotal || 0,
       } as LinhaRelatorio;
     });
-  }, [dados.centros, dados.linhas, metricasFinanceiras]);
+  }, [dados.centros, dados.linhas, metricasFinanceiras, solicitacoesAbertas]);
 
   const linhas = useMemo(() => [...linhasCalculadas].sort((a, b) => {
     const factor = direcao === "asc" ? 1 : -1;
@@ -392,7 +392,7 @@ export function Relatorios() {
     </form>
     {erro && <div className="error">{erro}</div>}
     {loading ? <Spinner/> : <>
-      <div className="stats report-stats"><ReportStat label="Total de solicitações" value={dados.resumo.solicitacoes}/><ReportStat label="Total comprado" value={resumoFinanceiro.compradas}/><ReportStat label="Total em aberto" value={dados.resumo.abertas}/><ReportStat label="Imprevistos/complementares" value={resumoFinanceiro.imprevistos}/><ReportStat label="Valor total geral" value={dinheiro(resumoFinanceiro.valorTotal)}/></div>
+      <div className="stats report-stats"><ReportStat label="Total de solicitações" value={dados.resumo.solicitacoes}/><ReportStat label="Total comprado" value={resumoFinanceiro.compradas}/><ReportStat label="Total em aberto" value={solicitacoesAbertas.length}/><ReportStat label="Imprevistos/complementares" value={resumoFinanceiro.imprevistos}/><ReportStat label="Valor total geral" value={dinheiro(resumoFinanceiro.valorTotal)}/></div>
       <div className="report-sort"><label>Ordenar por <select value={ordem} onChange={(e) => setOrdem(e.target.value as SortKey)}><option value="codigo">Código</option><option value="nome">Centro de custo</option><option value="compradas">Compradas</option><option value="abertas">Em aberto</option><option value="imprevistos">Imprevistos/complementares</option><option value="valor_total">Valor total</option></select></label><button className="btn secondary" type="button" onClick={() => setDirecao(direcao === "asc" ? "desc" : "asc")}>{direcao === "asc" ? "Crescente" : "Decrescente"}</button></div>
       <section className="card table-card">{!linhas.length ? <Empty text="Nenhum resultado para os filtros aplicados."/> : <table><thead><tr><th>Centro de custo</th><th>Compradas</th><th>Em aberto</th><th>Imprevistos/complementares</th><th>Valor total</th></tr></thead><tbody>{linhas.map((linha) => <tr key={linha.centro_custo_id || "sem-centro"}><td><button className="report-cost-center-link" type="button" onClick={() => setCentroSelecionado(linha.centro_custo_id || "sem-centro")}>{label(linha)}</button></td><td>{linha.compradas}</td><td>{linha.abertas}</td><td>{linha.imprevistos}</td><td><strong>{dinheiro(Number(linha.valor_total))}</strong></td></tr>)}</tbody></table>}</section>
     </>}
