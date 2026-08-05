@@ -12,7 +12,7 @@ for(const [nome,motivo,subtipo,tipo,quantidade] of [
   ["férias","ferias",null,"dias_corridos",25],["folga","folga_campo",null,"dias_corridos",15],
   ["transferência","transferencia_obra",null,"dias_corridos",15],["admissão","admissao",null,"dias_corridos",15],
   ["retorno","retorno_obra",null,"dias_corridos",15],["recesso","recesso",null,"dias_corridos",30],
-  ["desligamento programado","desligamento","programado_outros","dias_corridos",25],
+  ["desligamento programado","desligamento","programado_outros","dias_corridos",15],
   ["má conduta","desligamento","ma_conduta","dias_uteis",5],
   ["justa causa","desligamento","justa_causa","sem_prazo_minimo",0],
   ["pedido de demissão","desligamento","pedido_demissao","sem_prazo_minimo",0],
@@ -80,6 +80,12 @@ test("mensagem só aparece após motivo válido",()=>assert.equal(mensagemAntece
 test("mensagem de férias é curta",()=>assert.equal(mensagemAntecedencia("ferias"),"Antecedência mínima: 25 dias corridos."));
 test("mensagem de início de obra usa dias úteis",()=>assert.equal(mensagemAntecedencia("inicio_obra"),"Antecedência mínima: 5 dias úteis."));
 test("mensagem de justa causa não exige antecedência",()=>assert.equal(mensagemAntecedencia("desligamento","justa_causa"),"Sem antecedência mínima."));
+test("mensagem de desligamento programado mostra 15 dias",()=>assert.equal(mensagemAntecedencia("desligamento","programado_outros"),"Antecedência mínima: 15 dias corridos."));
+test("programado/outros bloqueia antes de 15 dias",()=>assert.ok(validar({motivo:"desligamento",desligamentoSubtipo:"programado_outros",dataIda:"2026-08-17"}).bloqueios.includes("FORA_DO_PRAZO")));
+test("programado/outros aceita exatamente 15 dias",()=>assert.equal(validar({motivo:"desligamento",desligamentoSubtipo:"programado_outros",dataIda:"2026-08-18"}).bloqueios.length,0));
+test("gerente mantém exceção para programado/outros",()=>assert.equal(validar({motivo:"desligamento",desligamentoSubtipo:"programado_outros",role:"gerente",dataIda:"2026-08-17",solicitarExcecao:true,justificativa:"Necessidade operacional urgente"}).bloqueios.length,0));
+test("exceção de programado/outros continua exigindo justificativa",()=>assert.ok(validar({motivo:"desligamento",desligamentoSubtipo:"programado_outros",role:"diretor",dataIda:"2026-08-17",solicitarExcecao:true,justificativa:"curta"}).bloqueios.includes("JUSTIFICATIVA_EXCECAO_OBRIGATORIA")));
+test("programado/outros não regride para 25 dias",()=>assert.notEqual(regraPrazo("desligamento","programado_outros").quantidade,25));
 test("gerente só reduz o min ao marcar exceção",()=>{assert.equal(dataMinimaDoInput("2026-08-28","2026-08-03",true,false),"2026-08-28");assert.equal(dataMinimaDoInput("2026-08-28","2026-08-03",true,true),"2026-08-03");});
 test("usuário comum nunca reduz o min",()=>assert.equal(dataMinimaDoInput("2026-08-28","2026-08-03",false,true),"2026-08-28"));
 test("data abaixo do novo prazo é limpa",()=>assert.equal(limparDataIdaInvalida("2026-08-10","2026-08-28"),""));

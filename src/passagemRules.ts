@@ -26,6 +26,7 @@ export function regraPrazo(motivo: Motivo | null, subtipo?: DesligamentoSubtipo 
   if (motivo === "desligamento") {
     if (subtipo === "justa_causa" || subtipo === "pedido_demissao") return { codigo: `desligamento_${subtipo}`, tipo: "sem_prazo_minimo" as const, quantidade: 0 };
     if (subtipo === "ma_conduta") return { codigo: "desligamento_ma_conduta", tipo: "dias_uteis" as const, quantidade: 5 };
+    if (subtipo === "programado_outros") return { codigo: "desligamento_programado_outros", tipo: "dias_corridos" as const, quantidade: 15 };
     return { codigo: "desligamento_programado_outros", tipo: "dias_corridos" as const, quantidade: 25 };
   }
   const regras: Partial<Record<Motivo, [PrazoTipo, number]>> = {
