@@ -99,6 +99,13 @@ export type Solicitacao = {
   recusada_em: string | null;
   recusada_por: string | null;
   motivo_recusa: string | null;
+  folga_data_prevista_ciclo: string | null;
+  folga_ciclo_anterior_id: string | null;
+  folga_antecipada: boolean;
+  folga_antecipacao_justificativa: string | null;
+  folga_antecipacao_status: "nao_aplicavel"|"pendente"|"aprovada"|"recusada"|null;
+  folga_antecipacao_analisada_por: string | null;
+  folga_antecipacao_analisada_em: string | null;
   status: Status;
   observacoes_solicitante: string | null;
   observacoes_ro: string | null;
