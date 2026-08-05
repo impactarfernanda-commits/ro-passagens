@@ -6,8 +6,8 @@ export type DiaNaoUtil = { data: string; ativo: boolean };
 export type DocumentoInternoInput = { categoria: string; mimeType: string; tamanhoBytes: number };
 export type ValidacaoInput = {
   motivo: Motivo | null; desligamentoSubtipo?: DesligamentoSubtipo | null; role: string | null; isRh: boolean;
-  primeiroEmbarque: string | null; agora: Date; diasNaoUteis?: DiaNaoUtil[]; anos?: CalendarioAno[];
-  justificativa?: string; documentos?: DocumentoInternoInput[];
+  dataIda: string | null; agora: Date; diasNaoUteis?: DiaNaoUtil[]; anos?: CalendarioAno[];
+  solicitarExcecao?: boolean; justificativa?: string; documentos?: DocumentoInternoInput[];
   canUseAdministrativeNull?: boolean;
 };
 export const RH_MOTIVOS: Motivo[] = ["admissao", "desligamento", "inicio_obra"];
@@ -62,6 +62,21 @@ export function categoriaDocumento(subtipo?: DesligamentoSubtipo | null) {
   return null;
 }
 
+export function mensagemAntecedencia(motivo: Motivo | null, subtipo?: DesligamentoSubtipo | null) {
+  if (!motivo || (motivo === "desligamento" && !subtipo)) return null;
+  const regra = regraPrazo(motivo, subtipo);
+  if (regra.tipo === "sem_prazo_minimo") return "Sem antecedência mínima.";
+  return `Antecedência mínima: ${regra.quantidade} ${regra.tipo === "dias_uteis" ? "dias úteis" : "dias corridos"}.`;
+}
+
+export function dataMinimaDoInput(dataMinimaNormal: string, hojeLocal: string, gerencial: boolean, solicitarExcecao: boolean) {
+  return gerencial && solicitarExcecao ? hojeLocal : dataMinimaNormal;
+}
+
+export function limparDataIdaInvalida(dataIda: string, minimo: string) {
+  return dataIda && dataIda < minimo ? "" : dataIda;
+}
+
 export function isFernandaAdmin(email?: string | null) { return email?.trim().toLocaleLowerCase("pt-BR") === "fernanda.souza@tanksbr.com.br"; }
 export function calendarYearsToInvalidate(operation:"INSERT"|"UPDATE"|"DELETE",oldDate?:string|null,newDate?:string|null){
   const year=(value?:string|null)=>value?Number(value.slice(0,4)):null;
@@ -75,14 +90,15 @@ export function validarSolicitacao(input: ValidacaoInput) {
   if (input.motivo==="viagem_diretoria" || (input.motivo && !motivosPermitidos(input.role,input.isRh).includes(input.motivo))) bloqueios.push("MOTIVO_NAO_PERMITIDO");
   if(input.motivo==="desligamento"&&!input.desligamentoSubtipo)bloqueios.push("SUBTIPO_DESLIGAMENTO_OBRIGATORIO");
   if(input.motivo!=="desligamento"&&input.desligamentoSubtipo)bloqueios.push("SUBTIPO_DESLIGAMENTO_INVALIDO");
-  const embarque=input.primeiroEmbarque?new Date(input.primeiroEmbarque):null;
-  if(!embarque||Number.isNaN(embarque.getTime()))bloqueios.push("PRIMEIRO_EMBARQUE_OBRIGATORIO"); else if(embarque.getTime()<=input.agora.getTime())bloqueios.push("EMBARQUE_NO_PASSADO");
+  const hoje=calcularDataMinima(input.agora,"sem_prazo_minimo",0).data;
+  const dataIda=input.dataIda||"";
+  if(!/^\d{4}-\d{2}-\d{2}$/.test(dataIda))bloqueios.push("DATA_IDA_OBRIGATORIA"); else if(dataIda<hoje)bloqueios.push("DATA_IDA_NO_PASSADO");
   const regra=regraPrazo(input.motivo,input.desligamentoSubtipo); const calculo=calcularDataMinima(input.agora,regra.tipo,regra.quantidade,input.diasNaoUteis,input.anos);
   if(calculo.anosPendentes.length)bloqueios.push(`CALENDARIO_INCOMPLETO:${calculo.anosPendentes[0]}`);
-  const dataEmbarque=embarque?new Intl.DateTimeFormat("en-CA",{timeZone:"America/Sao_Paulo",year:"numeric",month:"2-digit",day:"2-digit"}).format(embarque):"";
-  const foraDoPrazo=Boolean(dataEmbarque&&dataEmbarque<calculo.data);
+  const foraDoPrazo=Boolean(dataIda&&dataIda<calculo.data);
   if(foraDoPrazo&&!gerencial)bloqueios.push("FORA_DO_PRAZO");
-  if(foraDoPrazo&&gerencial&&(input.justificativa?.trim().length||0)<10)bloqueios.push("JUSTIFICATIVA_EXCECAO_OBRIGATORIA");
+  if(foraDoPrazo&&gerencial&&!input.solicitarExcecao)bloqueios.push("EXCECAO_PRAZO_NAO_SOLICITADA");
+  if(foraDoPrazo&&gerencial&&input.solicitarExcecao&&(input.justificativa?.trim().length||0)<10)bloqueios.push("JUSTIFICATIVA_EXCECAO_OBRIGATORIA");
   const categoria=categoriaDocumento(input.desligamentoSubtipo); const docs=input.documentos||[];
   if(categoria&&!docs.some((d)=>d.categoria===categoria))bloqueios.push(`DOCUMENTO_INTERNO_OBRIGATORIO:${categoria}`);
   for(const doc of docs){if(doc.mimeType!=="application/pdf")bloqueios.push("DOCUMENTO_NAO_PDF");if(doc.tamanhoBytes<=0||doc.tamanhoBytes>10*1024*1024)bloqueios.push("DOCUMENTO_TAMANHO_INVALIDO");}
