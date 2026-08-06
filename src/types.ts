@@ -91,6 +91,7 @@ export type Solicitacao = {
   data_ida: string;
   primeiro_embarque_em: string | null;
   data_retorno: string | null;
+  destino_retorno: string | null;
   centro_custo_retorno_id: string | null;
   retorno_indefinido: boolean;
   centro_custo_destino_id: string | null;

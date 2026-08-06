@@ -94,11 +94,18 @@ Deno.serve(async (request) => {
     if (existing?.length) { results.push({ userId: recipient.id, status: "ignorado" }); continue; }
 
     const subject = payload.tipo_evento === "nova_solicitacao_ro" ? `Nova solicitação de passagem - ${sol.funcionario?.nome || ""}` : `Passagem comprada - ${sol.funcionario?.nome || ""}`;
+    const possuiRetorno = ["ferias", "folga_campo", "recesso"].includes(sol.motivo || "");
+    const returnFields = possuiRetorno ? [
+      ["Data de retorno", sol.data_retorno ? formatDate(sol.data_retorno) : "Não informada"],
+      ...(sol.retorno_indefinido ? [["Retorno indefinido", "Sim"]] : [
+        ...(sol.destino_retorno ? [["Destino de retorno", sol.destino_retorno]] : []),
+        ...(sol.centro_retorno ? [["Centro de retorno", centroLabel(sol.centro_retorno)]] : []),
+      ]),
+    ] : [];
     const fields = payload.tipo_evento === "nova_solicitacao_ro" ? [
       ["Funcionário", sol.funcionario?.nome], ["Motivo", labelMotivo(sol.motivo)],
       ["Centro de custo atual/origem", centroLabel(sol.obra)], ["Centro de destino", centroLabel(sol.centro_destino)],
-      ["Centro de retorno", centroLabel(sol.centro_retorno)], ["Data de ida", formatDate(sol.data_ida)],
-      ["Data de retorno", sol.data_retorno ? formatDate(sol.data_retorno) : "Não informada"],
+      ["Data de ida", formatDate(sol.data_ida)], ...returnFields,
       ["Solicitante", requester?.user_metadata?.full_name || requester?.email], ["Observações", sol.observacoes_solicitante || "—"],
     ] : [
       ["Funcionário", sol.funcionario?.nome], ["Motivo", labelMotivo(sol.motivo)], ["Centro de custo atual", centroLabel(sol.obra)],
