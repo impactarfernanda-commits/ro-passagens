@@ -45,6 +45,7 @@ import { supabase } from "./supabase";
 import { calcularDataMinima, categoriaDocumento, dataMinimaDoInput, limparDataIdaInvalida, mensagemAntecedencia, motivosPermitidos, regraPrazo } from "./passagemRules";
 import { motivoPrefillPermitido, motivoRecusaValido, podeRecusarSolicitacao, statusContaComoAberto } from "./recusaRules";
 import { compraFolgaLiberada, dataAntecipaCiclo, folgaFuturaBloqueia, justificativaAntecipacaoValida, SEM_HISTORICO_FOLGA, type CicloFolga } from "./folgaCampoRules";
+import { motivoPossuiRetorno, normalizarCamposRetorno } from "./retornoRules";
 import type {
   Anexo,
   Custo,
@@ -960,6 +961,7 @@ export function NovaSolicitacao({ userId, access }: { userId: string; access: Ac
     desligamento_subtipo: "" as DesligamentoSubtipo | "",
     data_ida: "",
     data_retorno: "",
+    destino_retorno: "",
     centro_custo_retorno_id: "",
     retorno_indefinido: false,
     centro_custo_destino_id: "",
@@ -992,7 +994,7 @@ export function NovaSolicitacao({ userId, access }: { userId: string; access: Ac
       if(error||!prefill){setErro("Não foi possível carregar os dados seguros da solicitação recusada.");return;}
       const p=prefill as Partial<typeof form>;
       const motivo=motivoPrefillPermitido(p.motivo as Motivo|null,motivosPermitidos(access.role,access.isRh));
-      setForm((atual)=>({...atual,funcionario_id:p.funcionario_id||"",obra_id:p.obra_id||"",origem:p.origem||"",destino:p.destino||"",motivo:motivo as Motivo|"",desligamento_subtipo:motivo==="desligamento"?(p.desligamento_subtipo||"") as DesligamentoSubtipo|"":"",data_ida:p.data_ida||"",data_retorno:p.data_retorno||"",centro_custo_retorno_id:p.centro_custo_retorno_id||"",retorno_indefinido:Boolean(p.retorno_indefinido),centro_custo_destino_id:p.centro_custo_destino_id||"",observacoes_solicitante:p.observacoes_solicitante||"",solicitacao_origem_id:String(prefill.solicitacao_origem_id||origem),justificativa_excecao_prazo:""}));
+      setForm((atual)=>normalizarCamposRetorno({...atual,funcionario_id:p.funcionario_id||"",obra_id:p.obra_id||"",origem:p.origem||"",destino:p.destino||"",motivo:motivo as Motivo|"",desligamento_subtipo:motivo==="desligamento"?(p.desligamento_subtipo||"") as DesligamentoSubtipo|"":"",data_ida:p.data_ida||"",data_retorno:p.data_retorno||"",destino_retorno:p.destino_retorno||"",centro_custo_retorno_id:p.centro_custo_retorno_id||"",retorno_indefinido:Boolean(p.retorno_indefinido),centro_custo_destino_id:p.centro_custo_destino_id||"",observacoes_solicitante:p.observacoes_solicitante||"",solicitacao_origem_id:String(prefill.solicitacao_origem_id||origem),justificativa_excecao_prazo:""}));
       setDocumento(null);
       if(!motivo&&p.motivo)setErro("O motivo original não está disponível para seu perfil. Selecione outro motivo permitido.");
     });
@@ -1010,7 +1012,6 @@ export function NovaSolicitacao({ userId, access }: { userId: string; access: Ac
   const hojeLocal = calcularDataMinima(new Date(), "sem_prazo_minimo", 0).data;
   const gerencial = access.role === "gerente" || access.role === "diretor";
   const dataMinimaInput = dataMinimaDoInput(idaMinima, hojeLocal, gerencial, solicitarExcecao);
-  const exigePrazo = regra.tipo !== "sem_prazo_minimo";
   const funcionarioSelecionado = funcionarios.find((x) => x.id === form.funcionario_id);
   const funcionarioRestrito = Boolean(
     funcionarioSelecionado &&
@@ -1040,21 +1041,18 @@ export function NovaSolicitacao({ userId, access }: { userId: string; access: Ac
     });
   }
   function pickMotivo(motivo: Motivo | "") {
-    const temRetorno = ["ferias", "folga_campo"].includes(motivo);
-    setForm({
+    const temRetorno = motivoPossuiRetorno(motivo);
+    setForm(normalizarCamposRetorno({
       ...form,
       motivo,
       desligamento_subtipo: motivo === "desligamento" ? form.desligamento_subtipo : "",
       data_retorno: temRetorno ? form.data_retorno : "",
-      centro_custo_retorno_id: ["ferias", "folga_campo"].includes(motivo)
-        ? form.centro_custo_retorno_id
-        : "",
-      retorno_indefinido: ["ferias", "folga_campo"].includes(motivo)
-        ? form.retorno_indefinido
-        : false,
+      destino_retorno: temRetorno ? form.destino_retorno : "",
+      centro_custo_retorno_id: temRetorno ? form.centro_custo_retorno_id : "",
+      retorno_indefinido: temRetorno ? form.retorno_indefinido : false,
       centro_custo_destino_id:
         motivo === "transferencia_obra" ? form.centro_custo_destino_id : "",
-    });
+    }));
   }
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -1089,7 +1087,8 @@ export function NovaSolicitacao({ userId, access }: { userId: string; access: Ac
       if(up.error){setErro("Não foi possível enviar o documento interno.");setBusy(false);return;}
       documentos.push({categoria,storage_path:uploadedPath,arquivo_nome:documento.name,tamanho_bytes:documento.size});
     }
-    const { data: created, error } = await supabase.rpc("ro_criar_solicitacao_validada", { p_solicitacao:{...form,id,solicitar_excecao_prazo:gerencial&&solicitarExcecao}, p_documentos:documentos });
+    const payload=normalizarCamposRetorno({...form,id,solicitar_excecao_prazo:gerencial&&solicitarExcecao});
+    const { data: created, error } = await supabase.rpc("ro_criar_solicitacao_validada", { p_solicitacao:payload, p_documentos:documentos });
     if (error) {
       if(uploadedPath) await supabase.storage.from("ro-documentos-internos").remove([uploadedPath]);
       setErro(error.message.includes("CALENDARIO_INCOMPLETO") ? "O calendário de dias não úteis ainda não foi validado." : "Não foi possível criar a solicitação. Revise os dados e prazos.");
@@ -1209,7 +1208,7 @@ export function NovaSolicitacao({ userId, access }: { userId: string; access: Ac
         </label>
         {folgaAntecipada&&<label className="wide">Justificativa da antecipação *<textarea required minLength={10} rows={3} value={form.folga_antecipacao_justificativa} onChange={(e)=>setForm({...form,folga_antecipacao_justificativa:e.target.value})}/><small>Esta data antecipa o ciclo previsto da folga de campo. A equipe RO deverá aprovar a antecipação antes da compra da passagem.</small></label>}
         {categoriaDocumento(form.desligamento_subtipo || null) && <label className="wide">Documento interno obrigatório — {form.desligamento_subtipo === "justa_causa" ? "Termo de justa causa" : "Carta de pedido de demissão"}<input type="file" accept="application/pdf,.pdf" required onChange={(e)=>setDocumento(e.target.files?.[0] || null)}/><small>Somente PDF, até 10 MB. Acesso interno restrito.</small></label>}
-        {exigePrazo && (
+        {motivoPossuiRetorno(form.motivo) && (
           <>
             <label>
               Data de retorno
@@ -1222,10 +1221,17 @@ export function NovaSolicitacao({ userId, access }: { userId: string; access: Ac
                 }
               />
             </label>
-            <label>
+            {!form.retorno_indefinido && <label>
+              Destino de retorno — Cidade/UF
+              <input
+                value={form.destino_retorno}
+                onChange={(e) => setForm({ ...form, destino_retorno: e.target.value })}
+                placeholder="Cidade / UF"
+              />
+            </label>}
+            {!form.retorno_indefinido && <label>
               Centro de custo de retorno
               <select
-                disabled={form.retorno_indefinido}
                 value={form.centro_custo_retorno_id}
                 onChange={(e) =>
                   setForm({ ...form, centro_custo_retorno_id: e.target.value })
@@ -1238,8 +1244,8 @@ export function NovaSolicitacao({ userId, access }: { userId: string; access: Ac
                   </option>
                 ))}
               </select>
-            </label>
-            <label className="checkbox">
+            </label>}
+            <label className="checkbox wide">
               <input
                 type="checkbox"
                 checked={form.retorno_indefinido}
@@ -1247,6 +1253,7 @@ export function NovaSolicitacao({ userId, access }: { userId: string; access: Ac
                   setForm({
                     ...form,
                     retorno_indefinido: e.target.checked,
+                    destino_retorno: e.target.checked ? "" : form.destino_retorno,
                     centro_custo_retorno_id: e.target.checked
                       ? ""
                       : form.centro_custo_retorno_id,
@@ -1558,17 +1565,13 @@ export function Detalhe({ access, userId }: { access: Access; userId: string }) 
           <DT t="Destino" v={row.destino} />
           <DT t="Ida prevista" v={data(row.data_ida)} />
           {(access.isRh||access.isRO||access.isAdmin)&&row.desligamento_subtipo&&<DT t="Tipo de desligamento" v={row.desligamento_subtipo.replaceAll("_"," ")} />}
-          {["ferias", "folga_campo"].includes(row.motivo || "") && (
+          {motivoPossuiRetorno(row.motivo) && (
             <>
               <DT t="Retorno previsto" v={data(row.data_retorno)} />
-              <DT
-                t="Centro de custo de retorno"
-                v={
-                  row.retorno_indefinido
-                    ? "Indefinido"
-                    : formatCentroCustoLabel(row.centro_custo_retorno)
-                }
-              />
+              {row.retorno_indefinido ? <DT t="Retorno indefinido" v="Sim" /> : <>
+                {row.destino_retorno && <DT t="Destino de retorno" v={row.destino_retorno} />}
+                {row.centro_custo_retorno_id && <DT t="Centro de custo de retorno" v={formatCentroCustoLabel(row.centro_custo_retorno)} />}
+              </>}
             </>
           )}
           <DT
