@@ -1,0 +1,5 @@
+[functions.obras-sso-start]
+verify_jwt = false
+
+[functions.obras-sso-exchange]
+verify_jwt = false
