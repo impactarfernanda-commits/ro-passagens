@@ -46,6 +46,7 @@ import { calcularDataMinima, categoriaDocumento, dataMinimaDoInput, limparDataId
 import { motivoPrefillPermitido, motivoRecusaValido, podeRecusarSolicitacao, statusContaComoAberto } from "./recusaRules";
 import { compraFolgaLiberada, dataAntecipaCiclo, folgaFuturaBloqueia, justificativaAntecipacaoValida, SEM_HISTORICO_FOLGA, type CicloFolga } from "./folgaCampoRules";
 import { motivoPossuiRetorno, normalizarCamposRetorno } from "./retornoRules";
+import { autoMapHeaders, possibleMatches, safeMatches, validUf, type AddressField, type ColumnMapping } from "./addressImport";
 import type {
   Anexo,
   Custo,
@@ -952,6 +953,9 @@ export function NovaSolicitacao({ userId, access }: { userId: string; access: Ac
   const [documento, setDocumento] = useState<File | null>(null);
   const [cicloFolga,setCicloFolga]=useState<CicloFolga|null>(null);
   const [cicloLoading,setCicloLoading]=useState(false);
+  const [destinoResidencial,setDestinoResidencial]=useState<{possui_endereco:boolean;cidade:string|null;uf:string|null}|null>(null);
+  const [destinoDiferente,setDestinoDiferente]=useState(false);
+  const [justificativaDestino,setJustificativaDestino]=useState("");
   const [form, setForm] = useState({
     funcionario_id: "",
     obra_id: "",
@@ -1006,6 +1010,8 @@ export function NovaSolicitacao({ userId, access }: { userId: string; access: Ac
     setCicloLoading(true);
     supabase.rpc("ro_obter_ciclo_folga_funcionario",{p_funcionario_id:form.funcionario_id}).then(({data,error})=>{setCicloFolga(error?null:data as CicloFolga);if(error)setErro("Não foi possível consultar o ciclo de folga de campo.");setCicloLoading(false);});
   },[form.funcionario_id,form.motivo]);
+  const motivoResidencial=["ferias","folga_campo","recesso"].includes(form.motivo);
+  useEffect(()=>{setDestinoResidencial(null);setDestinoDiferente(false);setJustificativaDestino("");if(!motivoResidencial||!form.funcionario_id)return;supabase.rpc("ro_obter_destino_residencial_resumido",{p_funcionario_id:form.funcionario_id}).then(({data,error})=>{if(error){setErro("Não foi possível consultar o destino residencial.");return}const result=(Array.isArray(data)?data[0]:data) as {possui_endereco:boolean;cidade:string|null;uf:string|null};setDestinoResidencial(result);if(result?.possui_endereco)setForm(atual=>({...atual,destino:`${result.cidade} / ${result.uf}`}));else setForm(atual=>({...atual,destino:""}))})},[form.funcionario_id,form.motivo,motivoResidencial]);
   const regra = regraPrazo(form.motivo || null, form.desligamento_subtipo || null);
   const calculo = calcularDataMinima(new Date(), regra.tipo, regra.quantidade, diasNaoUteis, anosCalendario);
   const idaMinima = calculo.data;
@@ -1061,6 +1067,8 @@ export function NovaSolicitacao({ userId, access }: { userId: string; access: Ac
       setErro("Selecione o motivo da solicitação.");
       return;
     }
+    if(motivoResidencial&&!destinoDiferente&&!destinoResidencial?.possui_endereco){setErro("Funcionário sem endereço residencial cadastrado pelo RH.");return}
+    if(motivoResidencial&&destinoDiferente&&justificativaDestino.trim().length<10){setErro("A justificativa do destino excepcional deve ter pelo menos 10 caracteres.");return}
     if (!form.data_ida || form.data_ida < dataMinimaInput) {
       setDataPrazoErro(true);
       setErro("Selecione uma data que atenda à antecedência mínima.");
@@ -1087,7 +1095,7 @@ export function NovaSolicitacao({ userId, access }: { userId: string; access: Ac
       if(up.error){setErro("Não foi possível enviar o documento interno.");setBusy(false);return;}
       documentos.push({categoria,storage_path:uploadedPath,arquivo_nome:documento.name,tamanho_bytes:documento.size});
     }
-    const payload=normalizarCamposRetorno({...form,id,solicitar_excecao_prazo:gerencial&&solicitarExcecao});
+    const payload=normalizarCamposRetorno({...form,id,solicitar_excecao_prazo:gerencial&&solicitarExcecao,usar_destino_excepcional:motivoResidencial&&destinoDiferente,destino_residencial_justificativa:justificativaDestino});
     const { data: created, error } = await supabase.rpc("ro_criar_solicitacao_validada", { p_solicitacao:payload, p_documentos:documentos });
     if (error) {
       if(uploadedPath) await supabase.storage.from("ro-documentos-internos").remove([uploadedPath]);
@@ -1171,10 +1179,14 @@ export function NovaSolicitacao({ userId, access }: { userId: string; access: Ac
           <input
             required
             value={form.destino}
+            readOnly={motivoResidencial&&!destinoDiferente}
             onChange={(e) => setForm({ ...form, destino: e.target.value })}
             placeholder="Cidade / UF"
           />
+          {motivoResidencial&&destinoResidencial?.possui_endereco&&!destinoDiferente&&<small>Destino residencial cadastrado pelo RH.</small>}
+          {motivoResidencial&&destinoResidencial&&!destinoResidencial.possui_endereco&&!destinoDiferente&&<small className="error">Funcionário sem endereço residencial cadastrado pelo RH.</small>}
         </label>
+        {motivoResidencial&&<><label className="checkbox wide"><input type="checkbox" checked={destinoDiferente} onChange={e=>{setDestinoDiferente(e.target.checked);setForm(atual=>({...atual,destino:e.target.checked?"":destinoResidencial?.possui_endereco?`${destinoResidencial.cidade} / ${destinoResidencial.uf}`:""}))}}/> {destinoResidencial?.possui_endereco?"Utilizar destino diferente do cadastro":"Informar destino excepcional"}</label>{destinoDiferente&&<label className="wide">Justificativa do destino excepcional *<textarea required minLength={10} value={justificativaDestino} onChange={e=>setJustificativaDestino(e.target.value)}/></label>}</>}
         <label>
           Motivo{funcionarioRestrito ? "" : " *"}
           <select
@@ -1394,7 +1406,8 @@ export function Configuracoes() {
   const aba = ABAS_CONFIGURACOES.some(({ id }) => id === solicitada)
     ? solicitada as AbaConfiguracoes
     : "responsaveis-ro";
-  const tipo = params.get("tipo") === "centros-custo" ? "centros-custo" : "funcionarios";
+  const solicitado=params.get("tipo");
+  const tipo = solicitado === "centros-custo" || solicitado === "enderecos" ? solicitado : "funcionarios";
 
   function selecionarAba(proxima: AbaConfiguracoes) {
     const next = new URLSearchParams({ aba: proxima });
@@ -1427,9 +1440,11 @@ export function Configuracoes() {
         <div className="settings-subtabs" aria-label="Tipo de importação">
           <button type="button" className={`btn ${tipo === "funcionarios" ? "primary" : "secondary"}`} onClick={() => setParams({ aba: "importacoes", tipo: "funcionarios" }, { replace: true })}>Funcionários</button>
           <button type="button" className={`btn ${tipo === "centros-custo" ? "primary" : "secondary"}`} onClick={() => setParams({ aba: "importacoes", tipo: "centros-custo" }, { replace: true })}>Centros de custo</button>
+          <button type="button" className={`btn ${tipo === "enderecos" ? "primary" : "secondary"}`} onClick={() => setParams({ aba: "importacoes", tipo: "enderecos" }, { replace: true })}>Endereços de funcionários</button>
         </div>
         <div hidden={tipo !== "funcionarios"}><ImportacaoFuncionarios embedded /></div>
         <div hidden={tipo !== "centros-custo"}><ImportacaoCentrosCusto embedded /></div>
+        <div hidden={tipo !== "enderecos"}><EnderecosFuncionarios embedded /></div>
       </div>}
     </section>
   </Page>;
@@ -1441,6 +1456,7 @@ export function Detalhe({ access, userId }: { access: Access; userId: string }) 
   const [loading, setLoading] = useState(true);
   const [erro, setErro] = useState("");
   const [documentosInternos,setDocumentosInternos]=useState<Array<{id:string;categoria:string;arquivo_nome:string;storage_path:string;url?:string}>>([]);
+  const [enderecoResidencial,setEnderecoResidencial]=useState<{cep:string|null;logradouro:string|null;numero:string|null;complemento:string|null;bairro:string|null;cidade:string;uf:string;atualizado_em:string}|null>(null);
   const load = useCallback(() => {
     if (!id) return;
     supabase
@@ -1503,6 +1519,7 @@ export function Detalhe({ access, userId }: { access: Access; userId: string }) 
   }, [id]);
   useEffect(load, [load]);
   useEffect(()=>{if(!id || !(access.isRh||access.isRO||access.isAdmin))return;supabase.from("ro_passagem_documentos_internos").select("id,categoria,arquivo_nome,storage_path").eq("solicitacao_id",id).then(async({data})=>{const docs=await Promise.all((data||[]).map(async(d)=>{const signed=await supabase.storage.from("ro-documentos-internos").createSignedUrl(d.storage_path,300);return {...d,url:signed.data?.signedUrl};}));setDocumentosInternos(docs);});},[id,access.isRh,access.isRO,access.isAdmin]);
+  useEffect(()=>{if(!row||!["ferias","folga_campo","recesso"].includes(row.motivo||"")||!(access.isRh||access.isRO||access.canImport))return;supabase.rpc("ro_obter_endereco_residencial_completo",{p_funcionario_id:row.funcionario_id}).then(({data})=>setEnderecoResidencial((Array.isArray(data)?data[0]:data)||null))},[row,access.isRh,access.isRO,access.canImport]);
   if (loading)
     return (
       <Page title="Solicitação">
@@ -1581,6 +1598,7 @@ export function Detalhe({ access, userId }: { access: Access; userId: string }) 
           <DT t="Observações" v={row.observacoes_solicitante} />
         </dl>
       </section>
+      {(access.isRh||access.isRO||access.canImport)&&enderecoResidencial&&<section className="card detail"><h2>Endereço residencial</h2><dl><DT t="CEP" v={enderecoResidencial.cep}/><DT t="Logradouro" v={enderecoResidencial.logradouro}/><DT t="Número" v={enderecoResidencial.numero}/><DT t="Complemento" v={enderecoResidencial.complemento}/><DT t="Bairro" v={enderecoResidencial.bairro}/><DT t="Cidade / UF" v={`${enderecoResidencial.cidade} / ${enderecoResidencial.uf}`}/><DT t="Atualizado em" v={dataHora(enderecoResidencial.atualizado_em)}/>{row.destino_residencial_origem==="excepcional"&&<DT t="Destino alterado manualmente" v={row.destino_residencial_justificativa}/>}</dl></section>}
       {(access.isRh||access.isRO||access.isAdmin)&&documentosInternos.length>0&&<section className="card"><h2>Documentos internos restritos</h2>{documentosInternos.map((d)=><div className="actions" key={d.id}><span>{d.categoria==="termo_justa_causa"?"Termo de justa causa":"Carta de pedido de demissão"}</span>{d.url&&<a className="btn secondary" href={d.url} target="_blank" rel="noreferrer">Abrir PDF</a>}</div>)}</section>}
       {access.canOperateRO && <RecusarSolicitacao row={row} onDone={load} />}
       {row.status === "recusada" && row.solicitante_id === userId && <div className="actions rejection-recreate"><Link className="btn primary" to="/nova" state={{refazer:row.id}}>Criar nova a partir desta</Link></div>}
@@ -2843,4 +2861,26 @@ export function Responsaveis({ embedded = false }: { embedded?: boolean } = {}) 
     emptyText="Nenhum responsável RO cadastrado."
   />;
   return embedded ? conteudo : <Page title="Responsáveis RO" subtitle="Gerencie quem recebe e processa solicitações">{conteudo}</Page>;
+}
+
+type AddressEmployee={id:string;nome:string;possui_endereco:boolean;atualizado_em:string|null};
+type AddressPreview={linha:number;nome:string;funcionario_id:string|null;status:"seguro"|"ambiguo"|"possivel"|"nao_encontrado"|"invalido";cidade:string;uf:string;cep:string;logradouro:string;numero:string;complemento:string;bairro:string;existente:boolean;confirmado_manual:boolean;sugestoes:string[]};
+const addressLabels:Record<AddressField,string>={nome:"Nome",cep:"CEP",logradouro:"Logradouro",numero:"Número",complemento:"Complemento",bairro:"Bairro",cidade:"Cidade",uf:"UF"};
+
+export function EnderecosFuncionarios({embedded=false}:{embedded?:boolean}={}) {
+  const [employees,setEmployees]=useState<AddressEmployee[]>([]); const [rows,setRows]=useState<unknown[][]>([]);
+  const [mapping,setMapping]=useState<ColumnMapping>({}); const [preview,setPreview]=useState<AddressPreview[]>([]);
+  const [fileName,setFileName]=useState(""); const [confirmed,setConfirmed]=useState(false); const [message,setMessage]=useState("");
+  const [selectedEmployee,setSelectedEmployee]=useState<AddressEmployee|null>(null);const [editingAddress,setEditingAddress]=useState({cep:"",logradouro:"",numero:"",complemento:"",bairro:"",cidade:"",uf:""});
+  useEffect(()=>{supabase.rpc("ro_catalogo_funcionarios_enderecos").then(({data,error})=>{if(error)setMessage(error.message);else setEmployees((data||[]) as AddressEmployee[])})},[]);
+  async function choose(file?:File){setMessage("");setPreview([]);setConfirmed(false);if(!file)return;try{const parsed=await readXlsxFile(file);const data=parsed as unknown as unknown[][];setRows(data);setMapping(autoMapHeaders(data[0]||[]));setFileName(file.name)}catch{setMessage("Não foi possível ler a planilha. Use um arquivo XLSX válido.")}}
+  function value(row:unknown[],field:AddressField){const index=mapping[field];return index===undefined?"":String(row[index]??"").trim()}
+  function process(){if(mapping.nome===undefined||mapping.cidade===undefined||mapping.uf===undefined){setMessage("Mapeie os campos obrigatórios Nome, Cidade e UF.");return}const result=rows.slice(1).filter(r=>r.some(Boolean)).map((r,index)=>{const nome=value(r,"nome"),cidade=value(r,"cidade"),uf=value(r,"uf").toUpperCase(),matches=safeMatches(nome,employees),suggestions=matches.length?[]:possibleMatches(nome,employees);let status:AddressPreview["status"]=matches.length===1?"seguro":matches.length>1?"ambiguo":suggestions.length?"possivel":"nao_encontrado";if(!nome||!cidade||!validUf(uf))status="invalido";const employee=matches.length===1?matches[0]:null;return {linha:index+2,nome,funcionario_id:employee?.id||null,status,cidade,uf,cep:value(r,"cep").replace(/\D/g,""),logradouro:value(r,"logradouro"),numero:value(r,"numero"),complemento:value(r,"complemento"),bairro:value(r,"bairro"),existente:Boolean(employee?.possui_endereco),confirmado_manual:false,sugestoes:suggestions.map(x=>x.id)}});setPreview(result);setConfirmed(false);setMessage("")}
+  async function save(){if(!confirmed)return;const ready=preview.filter(x=>x.funcionario_id&&x.status==="seguro");const {data,error}=await supabase.rpc("ro_importar_enderecos_funcionarios",{p_arquivo_nome:fileName,p_linhas:preview});setMessage(error?error.message:`Importação concluída: ${Number((data as {importados?:number})?.importados||ready.length)} endereço(s).`);if(!error){setPreview([]);setRows([]);setConfirmed(false)}}
+  async function openEmployee(employee:AddressEmployee){setSelectedEmployee(employee);const {data}=await supabase.rpc("ro_obter_endereco_residencial_completo",{p_funcionario_id:employee.id});const found=(Array.isArray(data)?data[0]:data) as Partial<typeof editingAddress>|null;setEditingAddress({cep:found?.cep||"",logradouro:found?.logradouro||"",numero:found?.numero||"",complemento:found?.complemento||"",bairro:found?.bairro||"",cidade:found?.cidade||"",uf:found?.uf||""})}
+  async function saveManual(){if(!selectedEmployee||!editingAddress.cidade.trim()||!validUf(editingAddress.uf)){setMessage("Cidade e UF válida são obrigatórias.");return}const {error}=await supabase.rpc("ro_salvar_endereco_funcionario",{p_funcionario_id:selectedEmployee.id,p_endereco:editingAddress});setMessage(error?error.message:"Endereço salvo com segurança.");if(!error)setSelectedEmployee(null)}
+  const counts=(status:AddressPreview["status"])=>preview.filter(x=>x.status===status).length;
+  const manualReview=preview.some(x=>x.status==="possivel")?<section className="card"><h2>Possíveis correspondências — revisão manual</h2>{preview.filter(x=>x.status==="possivel").map(x=><label key={x.linha}>{x.nome}<select defaultValue="" onChange={e=>{const employee=employees.find(item=>item.id===e.target.value);if(!employee)return;setPreview(current=>current.map(item=>item.linha===x.linha?{...item,status:"seguro",funcionario_id:employee.id,existente:employee.possui_endereco,confirmado_manual:true}:item))}}><option value="">Não importar automaticamente</option>{x.sugestoes.map(id=>{const employee=employees.find(item=>item.id===id);return employee?<option value={id} key={id}>{employee.nome}</option>:null})}</select></label>)}</section>:null;
+  const content=<section className="card form"><h2>Endereços de funcionários</h2><p>O arquivo é processado localmente. Somente funcionários já cadastrados no Obras Control podem receber endereço.</p><label className="wide">Planilha RH (.xlsx)<input type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" onChange={e=>choose(e.target.files?.[0])}/></label>{rows.length>0&&<><div className="wide"><h3>Mapeamento de colunas</h3><div className="grid two">{(Object.keys(addressLabels) as AddressField[]).map(field=><label key={field}>{addressLabels[field]}{["nome","cidade","uf"].includes(field)?" *":""}<select value={mapping[field]??""} onChange={e=>setMapping({...mapping,[field]:e.target.value===""?undefined:Number(e.target.value)})}><option value="">Não mapear</option>{(rows[0]||[]).map((h,i)=><option value={i} key={i}>{String(h||`Coluna ${i+1}`)}</option>)}</select></label>)}</div><button className="btn primary" type="button" onClick={process}>Processar prévia</button></div></>}{preview.length>0&&<div className="wide"><h3>Prévia obrigatória</h3><p>{preview.length} linhas analisadas · {counts("seguro")} prontas · {counts("ambiguo")} ambíguas · {counts("possivel")} possíveis · {counts("nao_encontrado")} externas ignoradas · {counts("invalido")} inválidas</p><p>{preview.filter(x=>x.status==="seguro"&&x.existente).length} atualizações · {preview.filter(x=>x.status==="seguro"&&!x.existente).length} novos endereços</p><div className="table-wrap"><table><thead><tr><th>Linha</th><th>Funcionário</th><th>Resultado</th><th>Cidade / UF</th><th>Ação</th></tr></thead><tbody>{preview.map(x=><tr key={x.linha}><td>{x.linha}</td><td>{x.nome}</td><td>{x.status==="nao_encontrado"?"Funcionário não cadastrado no Obras Control — ignorado.":x.status==="seguro"?(x.existente?"Endereço existente será atualizado.":"Pronto para importar"):x.status}</td><td>{x.cidade} / {x.uf}</td><td>{x.status==="seguro"?"Incluir":"Não importar"}</td></tr>)}</tbody></table></div><div className="alert">Esta importação não cadastra novos funcionários. Somente endereços de funcionários já existentes no Obras Control serão incluídos ou atualizados.</div><label className="checkbox"><input type="checkbox" checked={confirmed} onChange={e=>setConfirmed(e.target.checked)}/> Confirmo a importação após revisar a prévia.</label><button className="btn primary" type="button" disabled={!confirmed||counts("seguro")===0} onClick={save}>Confirmar importação</button></div>}<div className="wide"><h3>Consulta privada</h3>{employees.map(employee=><div className="actions" key={employee.id}><span><strong>{employee.nome}</strong> — {employee.possui_endereco?`Endereço cadastrado · atualizado em ${data(employee.atualizado_em)}`:"Sem endereço cadastrado"}</span><button className="btn secondary" type="button" onClick={()=>openEmployee(employee)}>Visualizar / Editar</button></div>)}</div>{selectedEmployee&&<div className="wide"><h3>{selectedEmployee.nome}</h3><div className="grid two">{(["cep","logradouro","numero","complemento","bairro","cidade","uf"] as const).map(field=><label key={field}>{field}<input value={editingAddress[field]} onChange={e=>setEditingAddress({...editingAddress,[field]:e.target.value})}/></label>)}</div><div className="actions"><button className="btn primary" type="button" onClick={saveManual}>Salvar endereço</button><button className="btn secondary" type="button" onClick={()=>setSelectedEmployee(null)}>Fechar</button></div></div>}{message&&<div className="alert wide">{message}</div>}</section>;
+  return embedded?<>{content}{manualReview}</>:<Page title="Endereços de funcionários" subtitle="Área privada do RH">{content}{manualReview}</Page>;
 }

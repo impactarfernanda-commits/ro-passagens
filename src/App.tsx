@@ -9,6 +9,7 @@ import {
   Login,
   NovaSolicitacao,
   Configuracoes,
+  EnderecosFuncionarios,
   Solicitacoes,
 } from "./pages";
 import { Portal } from "./Portal";
@@ -151,6 +152,7 @@ export function App() {
                   path="/configuracoes"
                   element={access.canImport ? <Configuracoes /> : <Navigate to="/painel" replace />}
                 />
+                <Route path="/rh/enderecos" element={(access.isRh || access.canImport) ? <EnderecosFuncionarios /> : <Navigate to="/solicitacoes" replace />} />
                 <Route
                   path="/configuracoes-rh"
                   element={<Navigate to="/configuracoes?aba=responsaveis-rh" replace />}

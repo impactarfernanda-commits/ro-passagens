@@ -127,6 +127,8 @@ export type Solicitacao = {
   finalizado_em: string | null;
   created_at: string;
   updated_at: string;
+  destino_residencial_origem?: "rh" | "excepcional" | null;
+  destino_residencial_justificativa?: string | null;
   funcionario?: Funcionario;
   obra?: Obra;
   solicitante?: Perfil;
