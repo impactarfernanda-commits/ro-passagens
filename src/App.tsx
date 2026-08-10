@@ -14,6 +14,7 @@ import {
 } from "./pages";
 import { Portal } from "./Portal";
 import { Relatorios } from "./Relatorios";
+import { podeAcessarAreasGerais, podeAcessarImportacaoEnderecos } from "./addressAccess";
 
 export type Access = {
   isRO: boolean;
@@ -98,6 +99,8 @@ export function App() {
       </div>
     );
   if (!session) return <Login />;
+  const canAccessAddressImport = podeAcessarImportacaoEnderecos(access);
+  const canAccessGeneralAreas = podeAcessarAreasGerais(access);
   return (
     <Routes>
       <Route
@@ -114,6 +117,8 @@ export function App() {
               onLogout={() => supabase.auth.signOut()}
               canViewAll={access.canViewAll}
               canConfigure={access.canImport}
+              canImportAddresses={canAccessAddressImport}
+              isRh={access.isRh}
             />
             <section className="content">
               <Header onMenu={() => setSide(true)} />
@@ -121,7 +126,7 @@ export function App() {
                 <Route
                   path="/painel"
                   element={
-                    access.canViewAll ? (
+                    canAccessGeneralAreas ? (
                       <Dashboard access={access} />
                     ) : (
                       <Navigate to="/solicitacoes" replace />
@@ -137,7 +142,7 @@ export function App() {
                 <Route
                   path="/relatorios"
                   element={
-                    access.canViewAll ? (
+                    canAccessGeneralAreas ? (
                       <Relatorios />
                     ) : (
                       <Navigate to="/solicitacoes" replace />
@@ -150,9 +155,9 @@ export function App() {
                 />
                 <Route
                   path="/configuracoes"
-                  element={access.canImport ? <Configuracoes /> : <Navigate to="/painel" replace />}
+                  element={access.canImport ? <Configuracoes /> : <Navigate to="/solicitacoes" replace />}
                 />
-                <Route path="/rh/enderecos" element={(access.isRh || access.canImport) ? <EnderecosFuncionarios /> : <Navigate to="/solicitacoes" replace />} />
+                <Route path="/rh/enderecos" element={canAccessAddressImport ? <EnderecosFuncionarios /> : <Navigate to="/solicitacoes" replace />} />
                 <Route
                   path="/configuracoes-rh"
                   element={<Navigate to="/configuracoes?aba=responsaveis-rh" replace />}

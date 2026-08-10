@@ -9,6 +9,7 @@ import {
   Plane,
   Settings,
   Ticket,
+  Upload,
   X,
 } from "lucide-react";
 import { NavLink } from "react-router-dom";
@@ -48,13 +49,18 @@ export function Sidebar({
   onLogout,
   canViewAll,
   canConfigure,
+  canImportAddresses,
+  isRh,
 }: {
   open: boolean;
   onClose: () => void;
   onLogout: () => void;
   canViewAll: boolean;
   canConfigure: boolean;
+  canImportAddresses: boolean;
+  isRh: boolean;
 }) {
+  const canViewGeneralAreas = canViewAll && (!isRh || canConfigure);
   const links = [
     ["/painel", "Painel", LayoutDashboard],
     ["/solicitacoes", "Solicitações", ListChecks],
@@ -70,17 +76,23 @@ export function Sidebar({
         </div>
         <nav>
           {links
-            .filter(([, label]) => canViewAll || label !== "Painel")
+            .filter(([, label]) => canViewGeneralAreas || label !== "Painel")
             .map(([to, label, Icon]) => (
               <NavLink end key={to} to={to} onClick={onClose}>
                 <Icon size={19} />
                 {label}
               </NavLink>
             ))}
-          {canViewAll && (
+          {canViewGeneralAreas && (
             <NavLink to="/relatorios" onClick={onClose}>
               <BarChart3 size={19} />
               Relatórios
+            </NavLink>
+          )}
+          {canImportAddresses && (
+            <NavLink to="/rh/enderecos" onClick={onClose}>
+              <Upload size={19} />
+              Importação
             </NavLink>
           )}
           {canConfigure && (
