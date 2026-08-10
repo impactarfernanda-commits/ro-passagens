@@ -10,8 +10,8 @@ const sidebar = components.slice(components.indexOf("export function Sidebar"), 
 const solicitacoes = pages.slice(pages.indexOf("export function Solicitacoes"), pages.indexOf("export function NovaSolicitacao"));
 const config = pages.slice(pages.indexOf("type AbaConfiguracoes"), pages.indexOf("export function Detalhe"));
 
-test("menu final mantém Painel, Solicitações, Relatórios e Configurações nessa ordem", () => {
-  const labels = ["Painel", "Solicitações", "Relatórios", "Configurações"];
+test("menu final mantém Painel, Solicitações, Relatórios, Importação e Configurações nessa ordem", () => {
+  const labels = ["Painel", "Solicitações", "Relatórios", "Importação", "Configurações"];
   const positions = labels.map((label) => sidebar.indexOf(label));
   assert.ok(positions.every((position) => position >= 0));
   assert.deepEqual([...positions].sort((a, b) => a - b), positions);
@@ -26,9 +26,9 @@ test("menu não contém atalhos administrativos antigos nem Nova solicitação",
 
 test("Configurações usa exclusivamente a autorização da administradora do sistema", () => {
   assert.match(app, /canConfigure=\{access\.canImport\}/);
-  assert.match(app, /path="\/configuracoes"[\s\S]*?access\.canImport\s*\?\s*<Configuracoes \/>\s*:\s*<Navigate to="\/painel" replace \/>/);
+  assert.match(app, /path="\/configuracoes"[\s\S]*?access\.canImport\s*\?\s*<Configuracoes \/>\s*:\s*<Navigate to="\/solicitacoes" replace \/>/);
   assert.match(app, /supabase\.rpc\("ro_is_system_admin"/);
-  assert.doesNotMatch(sidebar, /canManageRO|canManageRh|isRO|isRh|role/);
+  assert.doesNotMatch(sidebar, /canManageRO|canManageRh|isRO|role/);
 });
 
 test("rota e único botão existente de Nova solicitação permanecem", () => {
@@ -52,6 +52,7 @@ test("abas reutilizam os componentes existentes sem duplicar operações", () =>
   assert.match(config, /<ConfiguracoesRH secao="calendario" \/>/);
   assert.match(config, /<ImportacaoFuncionarios embedded \/>/);
   assert.match(config, /<ImportacaoCentrosCusto embedded \/>/);
+  assert.doesNotMatch(config, /<EnderecosFuncionarios embedded \/>/);
   assert.equal((pages.match(/ro_importar_funcionarios/g) || []).length, 1);
   assert.equal((pages.match(/ro_importar_centros_custo_restritos/g) || []).length, 1);
 });
@@ -59,6 +60,7 @@ test("abas reutilizam os componentes existentes sem duplicar operações", () =>
 test("importações preservam estados independentes ao trocar o tipo", () => {
   assert.match(config, /hidden=\{tipo !== "funcionarios"\}/);
   assert.match(config, /hidden=\{tipo !== "centros-custo"\}/);
+  assert.doesNotMatch(config, /tipo !== "enderecos"/);
   assert.match(config, /tipo: "funcionarios"/);
   assert.match(config, /tipo: "centros-custo"/);
 });
