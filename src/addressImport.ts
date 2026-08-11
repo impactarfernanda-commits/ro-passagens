@@ -52,6 +52,27 @@ export function parseBirthDate(value: unknown): string|null {
 export function validUf(value: unknown) {return ["AC","AL","AP","AM","BA","CE","DF","ES","GO","MA","MT","MS","MG","PA","PB","PR","PE","PI","RJ","RN","RS","RO","RR","SC","SP","SE","TO"].includes(String(value??"").trim().toUpperCase())}
 export function safeMatches<T extends {id:string;nome:string}>(sheetName:string, employees:T[]):T[] {const key=normalizeText(sheetName);return employees.filter((employee)=>normalizeText(employee.nome)===key)}
 export function cpfMatches<T extends {cpf?:string|null}>(cpf:string,records:T[]):T[]{const key=normalizeCpf(cpf);return key?records.filter(record=>normalizeCpf(record.cpf)===key):[]}
+export type ImportMatchStatus="atualizacao"|"novo_vinculado"|"novo_externo"|"possivel_duplicidade";
+export type ImportMatch<TPrivate,TObras>={status:ImportMatchStatus;privateRecord:TPrivate|null;obrasRecord:TObras|null;candidates:TObras[]};
+/** Ordem conservadora: CPF privado, vínculo privado, nome privado e só então nome exato único no Obras. */
+export function matchCollaborator<
+  TPrivate extends {id:string;nome:string;cpf?:string|null;funcionario_id?:string|null},
+  TObras extends {id:string;nome:string}
+>(input:{nome:string;cpf?:string|null;funcionario_id?:string|null},privateRecords:TPrivate[],obrasRecords:TObras[]):ImportMatch<TPrivate,TObras>{
+  const byCpf=cpfMatches(input.cpf||"",privateRecords);
+  if(byCpf.length===1)return{status:"atualizacao",privateRecord:byCpf[0],obrasRecord:null,candidates:[]};
+  if(byCpf.length>1)return{status:"possivel_duplicidade",privateRecord:null,obrasRecord:null,candidates:[]};
+  const byLink=input.funcionario_id?privateRecords.filter(record=>record.funcionario_id===input.funcionario_id):[];
+  if(byLink.length===1)return{status:"atualizacao",privateRecord:byLink[0],obrasRecord:null,candidates:[]};
+  if(byLink.length>1)return{status:"possivel_duplicidade",privateRecord:null,obrasRecord:null,candidates:[]};
+  const byPrivateName=safeMatches(input.nome,privateRecords);
+  if(byPrivateName.length===1)return{status:"atualizacao",privateRecord:byPrivateName[0],obrasRecord:null,candidates:[]};
+  if(byPrivateName.length>1)return{status:"possivel_duplicidade",privateRecord:null,obrasRecord:null,candidates:[]};
+  const byObrasName=safeMatches(input.nome,obrasRecords);
+  if(byObrasName.length===1)return{status:"novo_vinculado",privateRecord:null,obrasRecord:byObrasName[0],candidates:byObrasName};
+  if(byObrasName.length>1)return{status:"possivel_duplicidade",privateRecord:null,obrasRecord:null,candidates:byObrasName};
+  return{status:"novo_externo",privateRecord:null,obrasRecord:null,candidates:[]};
+}
 export function possibleMatches<T extends {id:string;nome:string}>(sheetName:string,employees:T[]):T[]{const tokens=new Set(normalizeText(sheetName).split(" ").filter(x=>x.length>1));if(tokens.size<2)return[];return employees.filter(employee=>{const candidate=new Set(normalizeText(employee.nome).split(" ").filter(x=>x.length>1));const common=[...tokens].filter(x=>candidate.has(x)).length;return common>=2&&common/Math.max(tokens.size,candidate.size)>=0.5}).slice(0,5)}
 export function mergePreservingExisting<T extends Record<string,unknown>>(current:T,incoming:Partial<T>):T{return Object.fromEntries(Object.entries({...current,...incoming}).map(([key,value])=>[key,value===""||value==null?current[key]:value])) as T}
 export function duplicateCpfRows(rows:Array<{cpf?:string|null}>){const counts=new Map<string,number>();rows.forEach(row=>{const cpf=normalizeCpf(row.cpf);if(cpf)counts.set(cpf,(counts.get(cpf)||0)+1)});return new Set([...counts].filter(([,count])=>count>1).map(([cpf])=>cpf))}
