@@ -39,3 +39,22 @@ test("card bloqueia clique duplo e navega por redirect_url", () => {
   assert.match(portal, /disabled=\{opening\}/);
   assert.match(portal, /globalThis\.location\.assign/);
 });
+test("Portal nunca inicia o SSO automaticamente por query string, login ou refresh", () => {
+  assert.doesNotMatch(portal, /useEffect/);
+  assert.doesNotMatch(portal, /params\.get\(['"]app['"]\)/);
+  assert.doesNotMatch(portal, /app['"]?\s*===?\s*['"]obras-control/);
+});
+test("somente o clique no card de Alocacao inicia o SSO uma vez", () => {
+  assert.match(portal, /onClick=\{openObras\}/);
+  assert.match(portal, /if\(started\.current\)return/);
+  assert.equal((portal.match(/startObrasSso\(returnPath\)/g) ?? []).length, 1);
+});
+test("card de Passagens permanece interno e nao chama SSO", () => {
+  assert.match(portal, /<Link[^>]+to="\/solicitacoes"/);
+  const passagesCard = portal.match(/<Link[\s\S]*?<\/Link>/)?.[0] ?? "";
+  assert.doesNotMatch(passagesCard, /openObras|startObrasSso/);
+});
+test("return_path seguro fica preservado para o clique posterior", () => {
+  assert.match(portal, /safeObrasReturnPath\(params\.get\(['"]return_path['"]\)\)/);
+  assert.match(portal, /startObrasSso\(returnPath\)/);
+});

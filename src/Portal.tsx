@@ -1,4 +1,4 @@
-import {useCallback,useEffect,useRef,useState} from 'react';
+import {useCallback,useRef,useState} from 'react';
 import {ArrowRight,HardHat,Loader2,LogOut,Plane} from 'lucide-react';
 import {Link,useSearchParams} from 'react-router-dom';
 import {BrandLogo} from './components';
@@ -16,7 +16,6 @@ export function Portal({onLogout}:{onLogout:()=>void}){
     try{globalThis.location.assign(await startObrasSso(returnPath));}
     catch{started.current=false;setOpening(false);setError(true);}
   },[returnPath]);
-  useEffect(()=>{if(params.get('app')==='obras-control')void openObras();},[params,openObras]);
   return <div className="portal">
     <div className="portal-accent"/>
     <header className="portal-header">
