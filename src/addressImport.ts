@@ -1,6 +1,15 @@
 export type CollaboratorField = "nome"|"data_nascimento"|"cpf"|"rg"|"telefone"|"cep"|"logradouro"|"numero"|"complemento"|"bairro"|"cidade"|"uf"|"estado";
 export type AddressField = CollaboratorField;
 export type ColumnMapping = Partial<Record<CollaboratorField, number>>;
+export type SpreadsheetCell = string|number|boolean|Date|null;
+export type SpreadsheetRows = SpreadsheetCell[][];
+export const MAX_RH_XLSX_BYTES = 10 * 1024 * 1024;
+
+export function isSpreadsheetRows(value: unknown): value is SpreadsheetRows {
+  if(!Array.isArray(value)||value.length===0||!value.every(Array.isArray))return false;
+  const header=value[0];
+  return header.length>0&&header.some((cell)=>cell instanceof Date||typeof cell==="number"||typeof cell==="boolean"||(typeof cell==="string"&&cell.trim()!==""));
+}
 
 const aliases: Record<CollaboratorField,string[]> = {
   nome:["nome","colaborador","funcionario","nome do colaborador","nome do funcionario","nome colaborador","nome funcionario"],

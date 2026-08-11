@@ -1,0 +1,13 @@
+import assert from "node:assert/strict";import fs from "node:fs";import test from "node:test";
+import {autoMapHeaders,isSpreadsheetRows,MAX_RH_XLSX_BYTES} from "../src/addressImport.ts";
+
+const validRows=[["Nome do colaborador","Data de nascimento","CPF","RG","Telefone","Logradouro","Bairro","Cidade","Estado"],["Pessoa Externa",new Date(1990,0,1),"12345678901","RG-X","69999999999","Rua A","Centro","Porto Velho","RO"]];
+
+test("formato de Sheet[] do default export nunca é aceito como rows",()=>{const sheets=[{name:"Planilha1",data:validRows}];assert.equal(isSpreadsheetRows(sheets),false)});
+test("SheetData válido mantém cabeçalho iterável",()=>{assert.equal(isSpreadsheetRows(validRows),true);if(!isSpreadsheetRows(validRows))throw new Error("fixture inválida");assert.ok(Array.isArray(validRows[0]));assert.deepEqual(validRows[0].map(String).slice(0,3),["Nome do colaborador","Data de nascimento","CPF"])});
+test("mapeamento completo continua reconhecido",()=>{const mapping=autoMapHeaders(validRows[0]);for(const field of ["nome","data_nascimento","cpf","rg","telefone","logradouro","bairro","cidade","estado"])assert.notEqual(mapping[field as keyof typeof mapping],undefined,field)});
+test("estruturas vazias e sem tabela falham fechadas",()=>{for(const value of [null,{},[],[{}],[[]],[[null,null]],["Nome","CPF"]])assert.equal(isSpreadsheetRows(value),false)});
+test("limite do arquivo RH é 10 MB",()=>assert.equal(MAX_RH_XLSX_BYTES,10*1024*1024));
+test("tela usa readSheet sem cast e protege renderização",()=>{const page=fs.readFileSync("src/pages.tsx","utf8"),section=page.slice(page.indexOf("export function EnderecosFuncionarios"));assert.match(page,/import readXlsxFile, \{ readSheet, type SheetData \} from "read-excel-file\/browser"/);assert.match(section,/await readSheet\(file\)/);assert.doesNotMatch(section,/as unknown as unknown\[\]\[\]/);assert.match(section,/Array\.isArray\(rows\[0\]\)\?rows\[0\]:\[\]/);assert.match(section,/Lendo planilha\.\.\./)});
+test("seleção local não chama RPC nem registra células",()=>{const page=fs.readFileSync("src/pages.tsx","utf8"),start=page.indexOf("async function choose(file?:File)"),end=page.indexOf("function raw",start),choose=page.slice(start,end);assert.doesNotMatch(choose,/supabase|\.rpc\(/);assert.match(choose,/console\.error\("Falha ao ler estrutura XLSX do RH",detail\)/);assert.doesNotMatch(choose,/console\.(?:error|log)\([^\n]*(?:data\[|rows\[|p_colaborador)/)});
+test("outros importadores mantêm Sheet[] corretamente",()=>{const page=fs.readFileSync("src/pages.tsx","utf8");assert.ok((page.match(/const sheets = await readXlsxFile/g)||[]).length>=2);assert.ok((page.match(/sheets\[0\]\?\.data \|\| \[\]/g)||[]).length>=2)});
