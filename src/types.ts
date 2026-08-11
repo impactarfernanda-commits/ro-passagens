@@ -20,6 +20,7 @@ export type Status =
 export type Funcionario = {
   id: string;
   nome: string;
+  funcionario_id?: string | null;
   obra_id?: string | null;
   visivel_obras_control?: boolean;
   visivel_passagens?: boolean;
@@ -80,7 +81,8 @@ export type Anexo = {
 };
 export type Solicitacao = {
   id: string;
-  funcionario_id: string;
+  funcionario_id: string | null;
+  colaborador_id?: string | null;
   obra_id: string | null;
   solicitante_id: string;
   origem: string;
@@ -130,6 +132,7 @@ export type Solicitacao = {
   destino_residencial_origem?: "rh" | "excepcional" | null;
   destino_residencial_justificativa?: string | null;
   funcionario?: Funcionario;
+  colaborador?: { id:string; nome:string };
   obra?: Obra;
   solicitante?: Perfil;
   centro_custo_retorno?: Obra;
