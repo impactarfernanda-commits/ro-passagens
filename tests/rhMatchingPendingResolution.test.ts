@@ -1,0 +1,31 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import {buildCollaboratorSuggestions,canKeepAsExternal,isEligibleObrasMatch,matchCollaborator,possibleMatches,resolveCollaboratorSuggestion} from "../src/addressImport.ts";
+
+const wendellId="187e179f-0266-4dc4-8477-229b965cc78e";
+const obras=(extra={})=>({id:wendellId,nome:"WENDELL JOVIANO DA SILVA",ativo:true,deleted_at:null,visivel_obras_control:true,...extra});
+const privado=(extra={})=>({id:"privado-1",nome:"WENDELL JOVIANO DA SILVA",cpf:null,funcionario_id:null,...extra});
+const migration=fs.readFileSync("supabase/migrations/202608110004_corrige_matching_funcionarios_rh.sql","utf8");
+const page=fs.readFileSync("src/pages.tsx","utf8");
+
+test("Obras ativo e visível é elegível",()=>assert.equal(isEligibleObrasMatch(obras()),true));
+test("Obras ativo e invisível também é elegível",()=>assert.equal(isEligibleObrasMatch(obras({visivel_obras_control:false})),true));
+test("Obras excluído não é elegível",()=>assert.equal(isEligibleObrasMatch(obras({deleted_at:"2026-08-11"})),false));
+test("Obras inativo não é elegível",()=>assert.equal(isEligibleObrasMatch(obras({ativo:false})),false));
+test("Wendell exato invisível vira novo vinculado",()=>{const match=matchCollaborator({nome:"WENDELL JOVIANO DA SILVA"},[],[obras({visivel_obras_control:false})]);assert.equal(match.status,"novo_vinculado");assert.equal(match.obrasRecord?.id,wendellId)});
+test("dois Obras com nome exato viram pendência",()=>assert.equal(matchCollaborator({nome:"WENDELL JOVIANO DA SILVA"},[],[obras(),obras({id:"outro"})]).status,"possivel_duplicidade"));
+test("privado exato único vira atualização",()=>assert.equal(matchCollaborator({nome:"WENDELL JOVIANO DA SILVA"},[privado()],[]).status,"atualizacao"));
+test("privado exato com CPF divergente vira conflito",()=>assert.equal(matchCollaborator({nome:"WENDELL JOVIANO DA SILVA",cpf:"17271846883"},[privado({cpf:"99988877766"})],[]).status,"conflito"));
+test("fuzzy privado único produz sugestão resolvível",()=>{const similar=possibleMatches("WENDELL JOVIANO SILVA",[privado()]);const suggestions=buildCollaboratorSuggestions(matchCollaborator({nome:"WENDELL JOVIANO SILVA"},[],[]),similar);assert.equal(suggestions.length,1);assert.equal(suggestions[0].origem,"privado")});
+test("fuzzy privado múltiplo preserva todos os candidatos",()=>{const similar=possibleMatches("WENDELL JOVIANO SILVA",[privado(),privado({id:"privado-2"})]);assert.equal(buildCollaboratorSuggestions(matchCollaborator({nome:"WENDELL JOVIANO SILVA"},[],[]),similar).length,2)});
+test("fuzzy Obras produz sugestão com origem",()=>{const similar=possibleMatches("WENDELL JOVIANO SILVA",[obras()]);const suggestions=buildCollaboratorSuggestions(matchCollaborator({nome:"WENDELL JOVIANO SILVA"},[],[]),[],[],similar);assert.deepEqual(suggestions.map(x=>x.origem),["obras"])});
+test("seleção manual privada vira atualização",()=>{const item={colaborador_id:null,funcionario_id:null,status:"possivel_duplicidade" as const,mensagem:""};const resolved=resolveCollaboratorSuggestion(item,{origem:"privado",id:"privado-1",nome:"Wendell",funcionario_id:"f1",motivo:"nome_semelhante"});assert.equal(resolved.status,"atualizacao");assert.equal(resolved.colaborador_id,"privado-1")});
+test("seleção manual Obras vira novo vinculado",()=>{const item={colaborador_id:null,funcionario_id:null,status:"possivel_duplicidade" as const,mensagem:""};const resolved=resolveCollaboratorSuggestion(item,{origem:"obras",id:wendellId,nome:"Wendell",motivo:"nome_semelhante"});assert.equal(resolved.status,"novo_vinculado");assert.equal(resolved.funcionario_id,wendellId)});
+test("opção externa em fuzzy vira novo externo",()=>{const item={colaborador_id:null,funcionario_id:null,status:"possivel_duplicidade" as const,mensagem:""};assert.equal(resolveCollaboratorSuggestion(item,null).status,"novo_externo")});
+test("externo é bloqueado quando Obras exato único existe",()=>assert.equal(canKeepAsExternal(matchCollaborator({nome:"WENDELL JOVIANO DA SILVA"},[],[obras()])),false));
+test("resolver pendência reduz blocked imediatamente",()=>{const before=[{status:"possivel_duplicidade"},{status:"erro"}].filter(x=>["possivel_duplicidade","erro","conflito"].includes(x.status)).length;const resolved=resolveCollaboratorSuggestion({colaborador_id:null,funcionario_id:null,status:"possivel_duplicidade" as const,mensagem:""},{origem:"obras",id:wendellId,nome:"Wendell",motivo:"nome_semelhante"});const after=[resolved,{status:"erro"}].filter(x=>["possivel_duplicidade","erro","conflito"].includes(x.status)).length;assert.equal(before-after,1)});
+test("migration nunca altera visivel_obras_control nem public.funcionarios",()=>{assert.doesNotMatch(migration,/update\s+public\.funcionarios|set\s+visivel_obras_control/i);assert.doesNotMatch(migration,/where[^;]*visivel_obras_control/i)});
+test("reimportação do Wendell encontra o privado vinculado",()=>assert.equal(matchCollaborator({nome:"WENDELL JOVIANO DA SILVA"},[privado({funcionario_id:wendellId})],[obras({visivel_obras_control:false})]).status,"atualizacao"));
+test("segunda reimportação mantém o mesmo privado sem duplicar",()=>{const records=[privado({funcionario_id:wendellId,cpf:"17271846883"})];const first=matchCollaborator({nome:"WENDELL JOVIANO DA SILVA",cpf:"17271846883"},records,[obras({visivel_obras_control:false})]);const second=matchCollaborator({nome:"WENDELL JOVIANO DA SILVA",cpf:"17271846883"},records,[obras({visivel_obras_control:false})]);assert.equal(first.privateRecord?.id,second.privateRecord?.id)});
+test("RPC permanece privada, mínima e interface mostra uma sugestão",()=>{for(const token of ["ro_can_manage_private_addresses","returns table(id uuid,nome text,ativo boolean,colaborador_id uuid)","revoke all on function public.ro_catalogo_funcionarios_obras_matching_rh() from public,anon"])assert.ok(migration.includes(token),token);assert.match(page,/sugestoes\.length>0/);assert.doesNotMatch(migration,/salario|rg text|telefone text|logradouro text/i)});
