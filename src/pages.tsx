@@ -42,6 +42,7 @@ import { calcularCustosSemDuplicidade } from "./passagemGrouping";
 import { deduplicateNotifications } from "./notifications";
 import { buildPurchaseCosts, totalTicketValues } from "./purchaseCosts";
 import { supabase } from "./supabase";
+import { isRateLimitError, PASSWORD_MIN_LENGTH, PASSWORD_RECOVERY_MESSAGE, PASSWORD_RECOVERY_REDIRECT } from "./auth";
 import { calcularDataMinima, categoriaDocumento, dataMinimaDoInput, limparDataIdaInvalida, mensagemAntecedencia, motivosPermitidos, regraPrazo } from "./passagemRules";
 import { motivoPrefillPermitido, motivoRecusaValido, podeRecusarSolicitacao, statusContaComoAberto } from "./recusaRules";
 import { compraFolgaLiberada, dataAntecipaCiclo, folgaFuturaBloqueia, justificativaAntecipacaoValida, SEM_HISTORICO_FOLGA, type CicloFolga } from "./folgaCampoRules";
@@ -80,15 +81,17 @@ function useCatalogos() {
   return { funcionarios, obras };
 }
 export function Login() {
-  const [modo, setModo] = useState<"entrar" | "cadastrar">("entrar");
+  const location = useLocation();
+  const initialRecovery = Boolean((location.state as { recoverPassword?: boolean } | null)?.recoverPassword);
+  const [modo, setModo] = useState<"entrar" | "cadastrar" | "recuperar">(initialRecovery ? "recuperar" : "entrar");
   const [nome, setNome] = useState("");
   const [email, setEmail] = useState("");
   const [senha, setSenha] = useState("");
   const [confirmar, setConfirmar] = useState("");
   const [erro, setErro] = useState("");
-  const [sucesso, setSucesso] = useState("");
+  const [sucesso, setSucesso] = useState((location.state as { passwordReset?: string } | null)?.passwordReset || "");
   const [busy, setBusy] = useState(false);
-  function trocar(proximo: "entrar" | "cadastrar") {
+  function trocar(proximo: "entrar" | "cadastrar" | "recuperar") {
     setModo(proximo);
     setErro("");
     setSucesso("");
@@ -98,7 +101,12 @@ export function Login() {
     setBusy(true);
     setErro("");
     setSucesso("");
-    if (modo === "cadastrar") {
+    if (modo === "recuperar") {
+      const { error } = await supabase.auth.resetPasswordForEmail(email, { redirectTo: PASSWORD_RECOVERY_REDIRECT });
+      if (error && isRateLimitError(error)) setErro("Muitas tentativas em pouco tempo. Aguarde alguns minutos e tente novamente.");
+      else if (error) setErro("Não foi possível enviar as instruções agora. Verifique sua conexão e tente novamente.");
+      else setSucesso(PASSWORD_RECOVERY_MESSAGE);
+    } else if (modo === "cadastrar") {
       if (senha !== confirmar) {
         setErro("As senhas não conferem.");
         setBusy(false);
@@ -142,7 +150,7 @@ export function Login() {
           <h1>Portal Tanks BR</h1>
           <p>Acesse o portal corporativo</p>
         </div>
-        <div className="auth-tabs" role="tablist">
+        {modo !== "recuperar" && <div className="auth-tabs" role="tablist">
           <button
             type="button"
             className={modo === "entrar" ? "active" : ""}
@@ -157,7 +165,7 @@ export function Login() {
           >
             Cadastrar
           </button>
-        </div>
+        </div>}
         <EnvWarning />
         {erro && (
           <div className="error" role="alert">
@@ -169,6 +177,7 @@ export function Login() {
             {sucesso}
           </div>
         )}
+        {modo === "recuperar" && <p className="auth-recovery-copy">Informe seu e-mail para receber as instruções de recuperação.</p>}
         {modo === "cadastrar" && (
           <label>
             Nome completo <span>(opcional)</span>
@@ -191,7 +200,7 @@ export function Login() {
             placeholder="nome@tanksbr.com.br"
           />
         </label>
-        <label>
+        {modo !== "recuperar" && <label>
           Senha
           <input
             type="password"
@@ -200,11 +209,11 @@ export function Login() {
             autoComplete={
               modo === "entrar" ? "current-password" : "new-password"
             }
-            minLength={6}
+            minLength={PASSWORD_MIN_LENGTH}
             required
             placeholder="Mínimo de 6 caracteres"
           />
-        </label>
+        </label>}
         {modo === "cadastrar" && (
           <label>
             Confirmar senha
@@ -213,19 +222,21 @@ export function Login() {
               value={confirmar}
               onChange={(e) => setConfirmar(e.target.value)}
               autoComplete="new-password"
-              minLength={6}
+              minLength={PASSWORD_MIN_LENGTH}
               required
               placeholder="Digite a senha novamente"
             />
           </label>
         )}
         <button className="btn primary auth-submit" disabled={busy}>
-          {busy ? "Aguarde..." : modo === "entrar" ? "Entrar" : "Criar conta"}
+          {busy ? "Aguarde..." : modo === "entrar" ? "Entrar" : modo === "cadastrar" ? "Criar conta" : "Enviar link de recuperação"}
         </button>
-        <small className="auth-note">
+        {modo === "entrar" && <button className="auth-link" type="button" onClick={() => trocar("recuperar")}>Esqueci minha senha</button>}
+        {modo === "recuperar" && <button className="auth-link" type="button" onClick={() => trocar("entrar")}>Voltar para entrar</button>}
+        {modo !== "recuperar" && <small className="auth-note">
           Ao criar uma conta, você entra como solicitante comum. O acesso RO é
           administrado separadamente.
-        </small>
+        </small>}
       </form>
     </div>
   );
