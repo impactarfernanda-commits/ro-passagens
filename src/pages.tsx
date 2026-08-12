@@ -49,6 +49,8 @@ import { compraFolgaLiberada, dataAntecipaCiclo, folgaFuturaBloqueia, justificat
 import { motivoPossuiRetorno, normalizarCamposRetorno } from "./retornoRules";
 import { formatCityUf, normalizeNeighborhoodForDisplay, normalizeStreetForDisplay, parseCityUf } from "./collaboratorDisplay";
 import { currentCostCenterPrefill } from "./collaboratorCostCenter";
+import { CostCenterCombobox } from "./CostCenterCombobox";
+import { emptyNovaSolicitacaoForm, hasDraftContent, novaSolicitacaoDraftKey, parseDraft, serializeDraft, validateDraftCatalogIds, type NovaSolicitacaoDraftData } from "./novaSolicitacaoDraft";
 import { autoMapHeaders, buildCollaboratorSuggestions, canKeepAsExternal, duplicateCpfRows, formatCpf, formatPhone, isSpreadsheetRows, isValidCpf, matchCollaborator, MAX_RH_XLSX_BYTES, normalizeCpf, normalizePhone, parseBirthDate, possibleMatches, resolveCollaboratorSuggestion, strongAuxiliaryMatches, validUf, type AddressField, type CollaboratorSuggestion, type ColumnMapping, type SpreadsheetRows } from "./addressImport";
 import type {
   Anexo,
@@ -66,20 +68,22 @@ const join =
 function useCatalogos() {
   const [funcionarios, setF] = useState<Funcionario[]>([]);
   const [obras, setO] = useState<Obra[]>([]);
+  const [ready, setReady] = useState(false);
   useEffect(() => {
-    supabase
-      .rpc("ro_catalogo_colaboradores_viagem")
-      .then(({ data }) => setF((data || []) as Funcionario[]));
-    supabase.rpc("ro_catalogo_centros_custo").then(async ({ data }) => {
+    Promise.all([supabase.rpc("ro_catalogo_colaboradores_viagem"), supabase.rpc("ro_catalogo_centros_custo")]).then(async ([funcionariosResult, centrosResult]) => {
+      setF((funcionariosResult.data || []) as Funcionario[]);
+      const data = centrosResult.data;
       const catalogo = (data || []) as Obra[];
-      if (!catalogo.length) return setO([]);
-      const { data: detalhes } = await supabase.from("obras")
-        .select("id,codigo,descricao").in("id", catalogo.map((obra) => obra.id));
-      const porId = new Map((detalhes || []).map((obra) => [obra.id, obra]));
-      setO(catalogo.map((obra) => ({ ...obra, ...porId.get(obra.id) })));
+      if (!catalogo.length) setO([]);
+      else {
+        const { data: detalhes } = await supabase.from("obras").select("id,codigo,descricao").in("id", catalogo.map((obra) => obra.id));
+        const porId = new Map((detalhes || []).map((obra) => [obra.id, obra]));
+        setO(catalogo.map((obra) => ({ ...obra, ...porId.get(obra.id) })));
+      }
+      setReady(true);
     });
   }, []);
-  return { funcionarios, obras };
+  return { funcionarios, obras, ready };
 }
 export function Login() {
   const location = useLocation();
@@ -953,7 +957,7 @@ export function Solicitacoes({
   );
 }
 export function NovaSolicitacao({ userId, access }: { userId: string; access: Access }) {
-  const { funcionarios, obras } = useCatalogos();
+  const { funcionarios, obras, ready: catalogosReady } = useCatalogos();
   const nav = useNavigate();
   const location = useLocation();
   const [busy, setBusy] = useState(false);
@@ -969,24 +973,10 @@ export function NovaSolicitacao({ userId, access }: { userId: string; access: Ac
   const [destinoResidencial,setDestinoResidencial]=useState<{possui_endereco:boolean;cidade:string|null;uf:string|null}|null>(null);
   const [destinoDiferente,setDestinoDiferente]=useState(false);
   const [justificativaDestino,setJustificativaDestino]=useState("");
-  const [form, setForm] = useState({
-    funcionario_id: "",
-    obra_id: "",
-    origem: "",
-    destino: "",
-    motivo: "" as Motivo | "",
-    desligamento_subtipo: "" as DesligamentoSubtipo | "",
-    data_ida: "",
-    data_retorno: "",
-    destino_retorno: "",
-    centro_custo_retorno_id: "",
-    retorno_indefinido: false,
-    centro_custo_destino_id: "",
-    justificativa_excecao_prazo: "",
-    observacoes_solicitante: "",
-    solicitacao_origem_id: "",
-    folga_antecipacao_justificativa: "",
-  });
+  const [form, setForm] = useState(emptyNovaSolicitacaoForm);
+  const [draftReady, setDraftReady] = useState(false);
+  const restoredDraftRef = useRef(false);
+  const draftKey = novaSolicitacaoDraftKey(userId);
   useEffect(() => {
     supabase
       .from("users_profiles")
@@ -1004,6 +994,36 @@ export function NovaSolicitacao({ userId, access }: { userId: string; access: Ac
       supabase.from("ro_calendario_anos").select("ano,completo"),
     ]).then(([dias, anos]) => { setDiasNaoUteis(dias.data || []); setAnosCalendario(anos.data || []); });
   }, [userId]);
+  useEffect(() => {
+    if (!catalogosReady || draftReady) return;
+    const isRecreating = Boolean((location.state as { refazer?: string } | null)?.refazer);
+    if (!isRecreating) {
+      const parsed = parseDraft(localStorage.getItem(draftKey));
+      if (parsed) {
+        const restored = validateDraftCatalogIds(parsed, new Set(funcionarios.map(({ id }) => id)), new Set(obras.map(({ id }) => id)));
+        if (restored.form.motivo && !motivosPermitidos(access.role, access.isRh).includes(restored.form.motivo)) {
+          restored.form.motivo = "";
+          restored.form.desligamento_subtipo = "";
+        }
+        if (restored.form.funcionario_id && !restored.form.obra_id) restored.form.obra_id = currentCostCenterPrefill(funcionarios.find(({ id }) => id === restored.form.funcionario_id));
+        restoredDraftRef.current = true;
+        setForm(restored.form);
+        setSolicitarExcecao(restored.solicitarExcecao);
+        setDestinoDiferente(restored.destinoDiferente);
+        setJustificativaDestino(restored.justificativaDestino);
+      }
+    }
+    setDraftReady(true);
+  }, [access.isRh, access.role, catalogosReady, draftKey, draftReady, funcionarios, location.state, obras]);
+  useEffect(() => {
+    if (!draftReady) return;
+    const draft: NovaSolicitacaoDraftData = { form, solicitarExcecao, destinoDiferente, justificativaDestino };
+    const timer = window.setTimeout(() => {
+      if (hasDraftContent(draft)) localStorage.setItem(draftKey, serializeDraft(draft));
+      else localStorage.removeItem(draftKey);
+    }, 400);
+    return () => window.clearTimeout(timer);
+  }, [destinoDiferente, draftKey, draftReady, form, justificativaDestino, solicitarExcecao]);
   useEffect(()=>{
     const origem=(location.state as {refazer?:string}|null)?.refazer;
     if(!origem)return;
@@ -1027,6 +1047,14 @@ export function NovaSolicitacao({ userId, access }: { userId: string; access: Ac
   const motivoResidencial=["ferias","folga_campo","recesso"].includes(form.motivo);
   useEffect(()=>{setDestinoResidencial(null);setDestinoDiferente(false);setJustificativaDestino("");if(!motivoResidencial||!form.funcionario_id)return;const selected=funcionarios.find(x=>x.id===form.funcionario_id);if(!selected)return;const request=selected.funcionario_id===selected.id?supabase.rpc("ro_obter_destino_residencial_resumido",{p_funcionario_id:selected.id}):supabase.rpc("ro_obter_destino_colaborador_resumido",{p_colaborador_id:selected.id});request.then(({data,error})=>{if(error){setErro("Não foi possível consultar o destino residencial.");return}const result=(Array.isArray(data)?data[0]:data) as {possui_endereco:boolean;cidade:string|null;uf:string|null};setDestinoResidencial(result);if(result?.possui_endereco)setForm(atual=>({...atual,destino:`${result.cidade} / ${result.uf}`}));else setForm(atual=>({...atual,destino:""}))})},[form.funcionario_id,form.motivo,motivoResidencial,funcionarios]);
   const regra = regraPrazo(form.motivo || null, form.desligamento_subtipo || null);
+  useEffect(() => {
+    if (!draftReady || !restoredDraftRef.current) return;
+    const parsed = parseDraft(localStorage.getItem(draftKey));
+    if (!parsed) return;
+    setDestinoDiferente(parsed.destinoDiferente);
+    setJustificativaDestino(parsed.justificativaDestino);
+    setForm((current) => current.destino === parsed.form.destino ? current : { ...current, destino: parsed.form.destino });
+  }, [destinoResidencial, draftKey, draftReady]);
   const calculo = calcularDataMinima(new Date(), regra.tipo, regra.quantidade, diasNaoUteis, anosCalendario);
   const idaMinima = calculo.data;
   const hojeLocal = calcularDataMinima(new Date(), "sem_prazo_minimo", 0).data;
@@ -1051,6 +1079,7 @@ export function NovaSolicitacao({ userId, access }: { userId: string; access: Ac
     });
   }, [dataMinimaInput]);
   function pickFuncionario(id: string) {
+    restoredDraftRef.current = false;
     const f = funcionarios.find((x) => x.id === id);
     setForm({
       ...form,
@@ -1061,6 +1090,7 @@ export function NovaSolicitacao({ userId, access }: { userId: string; access: Ac
     });
   }
   function pickMotivo(motivo: Motivo | "") {
+    restoredDraftRef.current = false;
     const temRetorno = motivoPossuiRetorno(motivo);
     setForm(normalizarCamposRetorno({
       ...form,
@@ -1077,6 +1107,10 @@ export function NovaSolicitacao({ userId, access }: { userId: string; access: Ac
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     setErro("");
+    if (!form.obra_id) {
+      setErro("Selecione o centro de custo atual.");
+      return;
+    }
     if (!funcionarioRestrito && !form.motivo) {
       setErro("Selecione o motivo da solicitação.");
       return;
@@ -1117,7 +1151,14 @@ export function NovaSolicitacao({ userId, access }: { userId: string; access: Ac
       setBusy(false);
       return;
     }
+    localStorage.removeItem(draftKey);
     nav(`/solicitacoes/${created}`);
+  }
+  function cancel() {
+    const draft: NovaSolicitacaoDraftData = { form, solicitarExcecao, destinoDiferente, justificativaDestino };
+    if (hasDraftContent(draft) && !window.confirm("Descartar rascunho?\nAs informações preenchidas nesta solicitação serão apagadas.")) return;
+    localStorage.removeItem(draftKey);
+    nav("/solicitacoes");
   }
   return (
     <Page
@@ -1147,18 +1188,8 @@ export function NovaSolicitacao({ userId, access }: { userId: string; access: Ac
         </label>
         <label>
           Centro de custo atual *
-          <select
-            required
-            value={form.obra_id}
-            onChange={(e) => setForm({ ...form, obra_id: e.target.value })}
-          >
-            <option value="">Selecione</option>
-            {obras.map((x) => (
-              <option value={x.id} key={x.id}>
-                {formatCentroCustoLabel(x)}
-              </option>
-            ))}
-          </select>
+          <CostCenterCombobox required options={obras} value={form.obra_id}
+            onChange={(obra_id) => setForm((atual) => ({ ...atual, obra_id }))}/>
         </label>
         {form.motivo === "transferencia_obra" && (
           <label>
@@ -1318,9 +1349,9 @@ export function NovaSolicitacao({ userId, access }: { userId: string; access: Ac
           />
         </label>
         <div className="actions wide">
-          <Link className="btn secondary" to="/solicitacoes">
+          <button className="btn secondary" type="button" onClick={cancel}>
             Cancelar
-          </Link>
+          </button>
           <button className="btn primary" disabled={busy}>
             {busy ? "Criando..." : "Criar solicitação"}
           </button>
