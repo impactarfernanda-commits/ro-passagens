@@ -48,6 +48,7 @@ import { motivoPrefillPermitido, motivoRecusaValido, podeRecusarSolicitacao, sta
 import { compraFolgaLiberada, dataAntecipaCiclo, folgaFuturaBloqueia, justificativaAntecipacaoValida, SEM_HISTORICO_FOLGA, type CicloFolga } from "./folgaCampoRules";
 import { motivoPossuiRetorno, normalizarCamposRetorno } from "./retornoRules";
 import { formatCityUf, normalizeNeighborhoodForDisplay, normalizeStreetForDisplay, parseCityUf } from "./collaboratorDisplay";
+import { currentCostCenterPrefill } from "./collaboratorCostCenter";
 import { autoMapHeaders, buildCollaboratorSuggestions, canKeepAsExternal, duplicateCpfRows, formatCpf, formatPhone, isSpreadsheetRows, isValidCpf, matchCollaborator, MAX_RH_XLSX_BYTES, normalizeCpf, normalizePhone, parseBirthDate, possibleMatches, resolveCollaboratorSuggestion, strongAuxiliaryMatches, validUf, type AddressField, type CollaboratorSuggestion, type ColumnMapping, type SpreadsheetRows } from "./addressImport";
 import type {
   Anexo,
@@ -1054,7 +1055,7 @@ export function NovaSolicitacao({ userId, access }: { userId: string; access: Ac
     setForm({
       ...form,
       funcionario_id: id,
-      obra_id: f?.obra_id || form.obra_id,
+      obra_id: currentCostCenterPrefill(f),
       motivo: f?.visivel_obras_control === false && f.visivel_passagens === true &&
         f.escopo_passagens === "restrito_ro" ? "" : form.motivo,
     });
