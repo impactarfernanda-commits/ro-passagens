@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Navigate, Route, Routes } from "react-router-dom";
+import { Navigate, Route, Routes, useLocation } from "react-router-dom";
 import type { Session } from "@supabase/supabase-js";
 import { configured, supabase } from "./supabase";
 import { Header, Sidebar, Spinner } from "./components";
@@ -15,6 +15,7 @@ import {
 import { Portal } from "./Portal";
 import { Relatorios } from "./Relatorios";
 import { podeAcessarAreasGerais, podeAcessarImportacaoEnderecos } from "./addressAccess";
+import { PasswordRecovery } from "./PasswordRecovery";
 
 export type Access = {
   isRO: boolean;
@@ -41,7 +42,9 @@ const EMPTY_ACCESS: Access = {
 };
 
 export function App() {
+  const location = useLocation();
   const [session, setSession] = useState<Session | null>(null);
+  const [recoveryOnly, setRecoveryOnly] = useState(() => sessionStorage.getItem("portal-password-recovery") === "active");
   const [loading, setLoading] = useState(true);
   const [accessLoading, setAccessLoading] = useState(false);
   const [side, setSide] = useState(false);
@@ -51,7 +54,11 @@ export function App() {
       setSession(data.session);
       setLoading(false);
     });
-    const { data } = supabase.auth.onAuthStateChange((_e, s) => setSession(s));
+    const { data } = supabase.auth.onAuthStateChange((event, s) => {
+      setSession(s);
+      if (event === "PASSWORD_RECOVERY") setRecoveryOnly(true);
+      if (event === "SIGNED_OUT") setRecoveryOnly(false);
+    });
     return () => data.subscription.unsubscribe();
   }, []);
   useEffect(() => {
@@ -92,6 +99,8 @@ export function App() {
       })
       .finally(() => setAccessLoading(false));
   }, [session]);
+  if (recoveryOnly && location.pathname !== "/redefinir-senha") return <Navigate to="/redefinir-senha" replace />;
+  if (location.pathname === "/redefinir-senha") return <PasswordRecovery />;
   if (loading || accessLoading)
     return (
       <div className="full">
