@@ -42,7 +42,8 @@ test("múltiplas alocações usam a regra canônica mais recente", () => {
 test("troca de funcionário aplica novo prefill e escolha manual não sofre efeito/refetch", () => {
   assert.match(page, /function pickFuncionario\(id: string\)[\s\S]*obra_id: currentCostCenterPrefill\(f\)/);
   assert.doesNotMatch(page, /useEffect\([\s\S]{0,250}currentCostCenterPrefill/);
-  assert.match(page, /onChange=\{\(e\) => setForm\(\{ \.\.\.form, obra_id: e\.target\.value \}\)\}/);
+  assert.match(page, /<CostCenterCombobox required options=\{obras\} value=\{form\.obra_id\}/);
+  assert.match(page, /onChange=\{\(obra_id\) => setForm\(\(atual\) => \(\{ \.\.\.atual, obra_id \}\)\)\}/);
 });
 
 test("deduplicação permanece integral e alocação não usa matching por nome", () => {
