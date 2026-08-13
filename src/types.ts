@@ -112,6 +112,11 @@ export type Solicitacao = {
   folga_antecipacao_analisada_em: string | null;
   status: Status;
   observacoes_solicitante: string | null;
+  pix_viajante: string | null;
+  necessita_hospedagem: boolean;
+  hospedagem_checkin: string | null;
+  hospedagem_checkout: string | null;
+  ida_a_partir_horario: string | null;
   observacoes_ro: string | null;
   tipo_transporte: string | null;
   companhia: string | null;
