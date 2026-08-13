@@ -18,6 +18,18 @@ test("serializa e restaura todos os campos editáveis", () => {
   assert.deepEqual(parseDraft(serializeDraft(draft, new Date("2026-08-12T12:00:00Z")), Date.parse("2026-08-13T12:00:00Z"))?.form, draft.form);
 });
 
+test("rascunho mantém viagem administrativa", () => {
+  const draft = data();
+  draft.form.motivo = "viagem_administrativa";
+  assert.equal(parseDraft(serializeDraft(draft))?.form.motivo, "viagem_administrativa");
+});
+
+test("rascunho legado inequívoco converte nao_se_aplica", () => {
+  const raw = JSON.parse(serializeDraft(data())) as { form: Record<string, unknown> };
+  raw.form.motivo = "nao_se_aplica";
+  assert.equal(parseDraft(JSON.stringify(raw))?.form.motivo, "viagem_administrativa");
+});
+
 test("ignora formato incompatível, inválido ou expirado", () => {
   assert.equal(parseDraft("não-json"), null);
   assert.equal(parseDraft(JSON.stringify({ version: 999, updatedAt: new Date().toISOString(), form: {} })), null);

@@ -43,7 +43,7 @@ import { deduplicateNotifications } from "./notifications";
 import { buildPurchaseCosts, totalTicketValues } from "./purchaseCosts";
 import { supabase } from "./supabase";
 import { isRateLimitError, PASSWORD_MIN_LENGTH, PASSWORD_RECOVERY_MESSAGE, PASSWORD_RECOVERY_REDIRECT } from "./auth";
-import { calcularDataMinima, categoriaDocumento, dataMinimaDoInput, limparDataIdaInvalida, mensagemAntecedencia, motivosPermitidos, regraPrazo } from "./passagemRules";
+import { calcularDataMinima, categoriaDocumento, dataMinimaDoInput, limparDataIdaInvalida, mensagemAntecedencia, motivoAoSelecionarFuncionario, motivoPermiteExcecaoPrazo, motivosPermitidos, regraPrazo } from "./passagemRules";
 import { motivoPrefillPermitido, motivoRecusaValido, podeRecusarSolicitacao, statusContaComoAberto } from "./recusaRules";
 import { compraFolgaLiberada, dataAntecipaCiclo, folgaFuturaBloqueia, justificativaAntecipacaoValida, SEM_HISTORICO_FOLGA, type CicloFolga } from "./folgaCampoRules";
 import { motivoPossuiRetorno, normalizarCamposRetorno } from "./retornoRules";
@@ -1059,17 +1059,17 @@ export function NovaSolicitacao({ userId, access }: { userId: string; access: Ac
   const idaMinima = calculo.data;
   const hojeLocal = calcularDataMinima(new Date(), "sem_prazo_minimo", 0).data;
   const gerencial = access.role === "gerente" || access.role === "diretor";
-  const dataMinimaInput = dataMinimaDoInput(idaMinima, hojeLocal, gerencial, solicitarExcecao);
+  const permiteExcecaoPrazo = motivoPermiteExcecaoPrazo(form.motivo || null, form.desligamento_subtipo || null);
+  const dataMinimaInput = dataMinimaDoInput(idaMinima, hojeLocal, gerencial, permiteExcecaoPrazo && solicitarExcecao);
   const funcionarioSelecionado = funcionarios.find((x) => x.id === form.funcionario_id);
-  const funcionarioRestrito = Boolean(
-    funcionarioSelecionado &&
-    funcionarioSelecionado.visivel_obras_control === false &&
-    funcionarioSelecionado.visivel_passagens === true &&
-    funcionarioSelecionado.escopo_passagens === "restrito_ro",
-  );
   const foraPrazo =
     Boolean(form.data_ida) && form.data_ida < idaMinima;
   const folgaAntecipada=form.motivo==="folga_campo"&&dataAntecipaCiclo(form.data_ida,cicloFolga?.proxima_folga_prevista);
+  useEffect(() => {
+    if (permiteExcecaoPrazo) return;
+    setSolicitarExcecao(false);
+    setForm((atual) => atual.justificativa_excecao_prazo ? { ...atual, justificativa_excecao_prazo: "" } : atual);
+  }, [permiteExcecaoPrazo]);
   useEffect(() => {
     setForm((atual) => {
       const data_ida = limparDataIdaInvalida(atual.data_ida, dataMinimaInput);
@@ -1085,8 +1085,7 @@ export function NovaSolicitacao({ userId, access }: { userId: string; access: Ac
       ...form,
       funcionario_id: id,
       obra_id: currentCostCenterPrefill(f),
-      motivo: f?.visivel_obras_control === false && f.visivel_passagens === true &&
-        f.escopo_passagens === "restrito_ro" ? "" : form.motivo,
+      motivo: motivoAoSelecionarFuncionario(f, form.motivo),
     });
   }
   function pickMotivo(motivo: Motivo | "") {
@@ -1111,7 +1110,7 @@ export function NovaSolicitacao({ userId, access }: { userId: string; access: Ac
       setErro("Selecione o centro de custo atual.");
       return;
     }
-    if (!funcionarioRestrito && !form.motivo) {
+    if (!form.motivo) {
       setErro("Selecione o motivo da solicitação.");
       return;
     }
@@ -1143,11 +1142,13 @@ export function NovaSolicitacao({ userId, access }: { userId: string; access: Ac
       if(up.error){setErro("Não foi possível enviar o documento interno.");setBusy(false);return;}
       documentos.push({categoria,storage_path:uploadedPath,arquivo_nome:documento.name,tamanho_bytes:documento.size});
     }
-    const payload=normalizarCamposRetorno({...form,id,colaborador_id:funcionarioSelecionado?.funcionario_id===funcionarioSelecionado?.id?null:funcionarioSelecionado?.id,funcionario_id:funcionarioSelecionado?.funcionario_id||null,solicitar_excecao_prazo:gerencial&&solicitarExcecao,usar_destino_excepcional:motivoResidencial&&destinoDiferente,destino_residencial_justificativa:justificativaDestino});
+    const payload=normalizarCamposRetorno({...form,id,colaborador_id:funcionarioSelecionado?.funcionario_id===funcionarioSelecionado?.id?null:funcionarioSelecionado?.id,funcionario_id:funcionarioSelecionado?.funcionario_id||null,solicitar_excecao_prazo:gerencial&&permiteExcecaoPrazo&&solicitarExcecao,usar_destino_excepcional:motivoResidencial&&destinoDiferente,destino_residencial_justificativa:justificativaDestino});
     const { data: created, error } = await supabase.rpc("ro_criar_solicitacao_colaborador_validada", { p_solicitacao:payload, p_documentos:documentos });
     if (error) {
       if(uploadedPath) await supabase.storage.from("ro-documentos-internos").remove([uploadedPath]);
-      setErro(error.message.includes("CALENDARIO_INCOMPLETO") ? "O calendário de dias não úteis ainda não foi validado." : "Não foi possível criar a solicitação. Revise os dados e prazos.");
+      if (import.meta.env.DEV) console.error("Falha ao criar solicitação", { message:error.message, code:error.code, details:error.details, hint:error.hint });
+      const motivoInvalido = /MOTIVO_(NAO_PERMITIDO|ADMINISTRATIVO_NAO_PERMITIDO)|motivo.*(check constraint|obrigat)/i.test(`${error.message} ${error.details || ""}`);
+      setErro(error.message.includes("CALENDARIO_INCOMPLETO") ? "O calendário de dias não úteis ainda não foi validado." : motivoInvalido ? "Motivo da solicitação inválido. Selecione novamente o motivo da viagem." : "Não foi possível criar a solicitação. Revise os dados e prazos.");
       setBusy(false);
       return;
     }
@@ -1233,14 +1234,14 @@ export function NovaSolicitacao({ userId, access }: { userId: string; access: Ac
         </label>
         {motivoResidencial&&<><label className="checkbox wide"><input type="checkbox" checked={destinoDiferente} onChange={e=>{setDestinoDiferente(e.target.checked);setForm(atual=>({...atual,destino:e.target.checked?"":destinoResidencial?.possui_endereco?`${destinoResidencial.cidade} / ${destinoResidencial.uf}`:""}))}}/> {destinoResidencial?.possui_endereco?"Utilizar destino diferente do cadastro":"Informar destino excepcional"}</label>{destinoDiferente&&<label className="wide">Justificativa do destino excepcional *<textarea required minLength={10} value={justificativaDestino} onChange={e=>setJustificativaDestino(e.target.value)}/></label>}</>}
         <label>
-          Motivo{funcionarioRestrito ? "" : " *"}
+          Motivo *
           <select
-            required={!funcionarioRestrito}
+            required
             value={form.motivo}
             onChange={(e) => pickMotivo(e.target.value as Motivo | "")}
           >
-            <option value="">{funcionarioRestrito ? "Não se aplica" : "Selecione"}</option>
-            {!funcionarioRestrito && Object.entries(motivoLabel)
+            <option value="">Selecione</option>
+            {Object.entries(motivoLabel)
               .filter(([v]) => motivosPermitidos(access.role, access.isRh).includes(v as Motivo))
               .map(([v, l]) => (
                 <option value={v} key={v}>
@@ -1321,8 +1322,8 @@ export function NovaSolicitacao({ userId, access }: { userId: string; access: Ac
             </label>
           </>
         )}
-        {gerencial && <label className="checkbox wide"><input type="checkbox" checked={solicitarExcecao} onChange={(e)=>{const marcada=e.target.checked;setSolicitarExcecao(marcada);setDataPrazoErro(false);setForm((atual)=>({...atual,justificativa_excecao_prazo:marcada?atual.justificativa_excecao_prazo:"",data_ida:marcada?atual.data_ida:limparDataIdaInvalida(atual.data_ida,idaMinima)}));}} /> Solicitar exceção de prazo</label>}
-        {gerencial && solicitarExcecao && (
+        {gerencial && permiteExcecaoPrazo && <label className="checkbox wide"><input type="checkbox" checked={solicitarExcecao} onChange={(e)=>{const marcada=e.target.checked;setSolicitarExcecao(marcada);setDataPrazoErro(false);setForm((atual)=>({...atual,justificativa_excecao_prazo:marcada?atual.justificativa_excecao_prazo:"",data_ida:marcada?atual.data_ida:limparDataIdaInvalida(atual.data_ida,idaMinima)}));}} /> Solicitar exceção de prazo</label>}
+        {gerencial && permiteExcecaoPrazo && solicitarExcecao && (
           <label className="wide">
             Justificativa da exceção *
             <textarea

@@ -11,7 +11,7 @@ export type ValidacaoInput = {
   canUseAdministrativeNull?: boolean;
 };
 export const RH_MOTIVOS: Motivo[] = ["admissao", "desligamento", "inicio_obra"];
-export const MOTIVOS_CRIACAO: Motivo[] = ["ferias", "folga_campo", "desligamento", "transferencia_obra", "admissao", "inicio_obra", "retorno_obra", "recesso"];
+export const MOTIVOS_CRIACAO: Motivo[] = ["ferias", "folga_campo", "desligamento", "transferencia_obra", "admissao", "inicio_obra", "retorno_obra", "recesso", "viagem_administrativa"];
 
 export function motivosPermitidos(role: string | null, isRh: boolean) {
   if (role === "gerente" || role === "diretor") return MOTIVOS_CRIACAO;
@@ -32,9 +32,18 @@ export function regraPrazo(motivo: Motivo | null, subtipo?: DesligamentoSubtipo 
   const regras: Partial<Record<Motivo, [PrazoTipo, number]>> = {
     ferias: ["dias_corridos", 25], folga_campo: ["dias_corridos", 15], transferencia_obra: ["dias_corridos", 15],
     admissao: ["dias_corridos", 15], retorno_obra: ["dias_corridos", 15], inicio_obra: ["dias_uteis", 5], recesso: ["dias_corridos", 30],
+    viagem_administrativa: ["sem_prazo_minimo", 0],
   };
   const [tipo, quantidade] = regras[motivo || "viagem_diretoria"] || ["sem_prazo_minimo", 0];
   return { codigo: motivo || "administrativo", tipo, quantidade };
+}
+
+export function motivoAoSelecionarFuncionario(funcionario: { funcionario_id?: string | null } | undefined, motivoAtual: Motivo | "") {
+  return funcionario && !funcionario.funcionario_id ? "viagem_administrativa" as const : motivoAtual;
+}
+
+export function motivoPermiteExcecaoPrazo(motivo: Motivo | null, subtipo?: DesligamentoSubtipo | null) {
+  return regraPrazo(motivo, subtipo).tipo !== "sem_prazo_minimo";
 }
 const zonedParts = (d: Date) => Object.fromEntries(new Intl.DateTimeFormat("en-CA", { timeZone: "America/Sao_Paulo", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).formatToParts(d).map((p) => [p.type, p.value]));
 const calendarDate = (d: Date) => { const p=zonedParts(d); return new Date(Date.UTC(Number(p.year),Number(p.month)-1,Number(p.day),12)); };
