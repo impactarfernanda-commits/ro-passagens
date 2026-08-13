@@ -61,6 +61,7 @@ export function parseDraft(raw: string | null, now = Date.now()): StoredDraft | 
     const base = emptyNovaSolicitacaoForm();
     const form = Object.fromEntries(Object.entries(base).map(([key, fallback]) => {
       const candidate = (value.form as Record<string, unknown>)[key];
+      if (key === "motivo" && candidate === "nao_se_aplica") return [key, "viagem_administrativa"];
       return [key, typeof candidate === typeof fallback ? candidate : fallback];
     })) as NovaSolicitacaoForm;
     return {

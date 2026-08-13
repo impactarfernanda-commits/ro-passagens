@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { calcularDataMinima, calendarYearsToInvalidate, categoriaDocumento, dataMinimaDoInput, getPrimeiroEmbarque, isFernandaAdmin, limparDataIdaInvalida, mensagemAntecedencia, motivosPermitidos, regraPrazo, validarSolicitacao, type ValidacaoInput } from "../src/passagemRules.ts";
+import { calcularDataMinima, calendarYearsToInvalidate, categoriaDocumento, dataMinimaDoInput, getPrimeiroEmbarque, isFernandaAdmin, limparDataIdaInvalida, mensagemAntecedencia, motivoAoSelecionarFuncionario, motivoPermiteExcecaoPrazo, motivosPermitidos, regraPrazo, validarSolicitacao, type ValidacaoInput } from "../src/passagemRules.ts";
 import { validatePdfFile, validatePdfSignature } from "../src/pdfFileValidation.ts";
 
 const sp=(value:string)=>new Date(`${value}-03:00`);
@@ -16,6 +16,7 @@ for(const [nome,motivo,subtipo,tipo,quantidade] of [
   ["má conduta","desligamento","ma_conduta","dias_uteis",5],
   ["justa causa","desligamento","justa_causa","sem_prazo_minimo",0],
   ["pedido de demissão","desligamento","pedido_demissao","sem_prazo_minimo",0],
+  ["viagem administrativa","viagem_administrativa",null,"sem_prazo_minimo",0],
 ] as const)test(`prazo: ${nome}`,()=>{const r=regraPrazo(motivo,subtipo);assert.equal(r.tipo,tipo);assert.equal(r.quantidade,quantidade);});
 
 test("dias corridos 04/08/2026 + 25 = 29/08/2026",()=>assert.equal(calcularDataMinima(sp("2026-08-04T12:00:00"),"dias_corridos",25).data,"2026-08-29"));
@@ -38,8 +39,11 @@ test("usuário comum não vê admissão e vê recesso",()=>{const r=motivosPermi
 test("RH ativo vê somente três motivos",()=>assert.deepEqual(motivosPermitidos("assistente",true),["admissao","desligamento","inicio_obra"]));
 test("RH inativo volta às permissões comuns",()=>assert.equal(motivosPermitidos("assistente",false).includes("admissao"),false));
 test("RO sem RH não recebe admissão",()=>assert.equal(motivosPermitidos("coordenador",false).includes("admissao"),false));
-test("gerente vê todos os motivos de criação",()=>assert.equal(motivosPermitidos("gerente",false).length,8));
-test("diretor vê todos e não vê viagem diretoria",()=>{const r=motivosPermitidos("diretor",false);assert.equal(r.length,8);assert.equal(r.includes("viagem_diretoria"),false);});
+test("gerente vê todos os motivos de criação",()=>assert.equal(motivosPermitidos("gerente",false).length,9));
+test("diretor vê todos e não vê viagem diretoria",()=>{const r=motivosPermitidos("diretor",false);assert.equal(r.length,9);assert.equal(r.includes("viagem_diretoria"),false);});
+test("colaborador sem vínculo explícito recebe viagem administrativa editável",()=>{assert.equal(motivoAoSelecionarFuncionario({funcionario_id:null},""),"viagem_administrativa");assert.equal(motivoAoSelecionarFuncionario({funcionario_id:null},"admissao"),"viagem_administrativa");});
+test("funcionário Obras Control preserva o motivo atual",()=>assert.equal(motivoAoSelecionarFuncionario({funcionario_id:"obras-id"},"inicio_obra"),"inicio_obra"));
+test("default administrativo não impede seleção manual de outros motivos",()=>assert.ok(motivosPermitidos("gerente",false).includes("admissao")&&motivosPermitidos("gerente",false).includes("inicio_obra")));
 test("Fernanda administra com e-mail case-insensitive",()=>{assert.equal(isFernandaAdmin("FERNANDA.SOUZA@TANKSBR.COM.BR"),true);assert.equal(isFernandaAdmin("fernanda.souza@tanksbr.com.br"),true);});
 test("outro gerente ou diretor não administra",()=>assert.equal(isFernandaAdmin("diretor@tanksbr.com.br"),false));
 test("usuário sem role não vê Admissão",()=>assert.equal(motivosPermitidos(null,false).includes("admissao"),false));
@@ -70,6 +74,8 @@ test("primeiro embarque entre ida e volta",()=>assert.equal(getPrimeiroEmbarque(
 test("primeiro embarque usa menor datetime em múltiplos trechos",()=>assert.equal(getPrimeiroEmbarque(["2026-08-12T10:00:00-03:00","2026-08-09T08:00:00-03:00","2026-08-10T07:00:00-03:00"]),"2026-08-09T08:00:00-03:00"));
 test("mesmo dia permitido sem prazo",()=>assert.equal(validar({motivo:"desligamento",desligamentoSubtipo:"justa_causa",dataIda:"2026-08-03",documentos:[{categoria:"termo_justa_causa",mimeType:"application/pdf",tamanhoBytes:100}]}).bloqueios.length,0));
 test("dia anterior bloqueado sem prazo",()=>assert.ok(validar({motivo:"desligamento",desligamentoSubtipo:"pedido_demissao",dataIda:"2026-08-02",documentos:[{categoria:"carta_pedido_demissao",mimeType:"application/pdf",tamanhoBytes:100}]}).bloqueios.includes("DATA_IDA_NO_PASSADO")));
+test("viagem administrativa aceita o mesmo dia sem exceção",()=>{const r=validar({motivo:"viagem_administrativa",role:"gerente",dataIda:"2026-08-03",solicitarExcecao:false,justificativa:""});assert.equal(r.bloqueios.length,0);assert.equal(r.foraDoPrazo,false);assert.equal(motivoPermiteExcecaoPrazo("viagem_administrativa"),false);});
+test("motivo com prazo reativa exceção",()=>assert.equal(motivoPermiteExcecaoPrazo("ferias"),true));
 
 test("mudança de data recalcula prazo",()=>assert.notEqual(validar({dataIda:"2026-09-01"}).foraDoPrazo,validar({dataIda:"2026-08-10"}).foraDoPrazo));
 test("mudança de motivo recalcula prazo",()=>assert.notEqual(validar({motivo:"ferias"}).regra.quantidade,validar({motivo:"recesso"}).regra.quantidade));
