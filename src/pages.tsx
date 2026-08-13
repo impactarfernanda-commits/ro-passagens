@@ -49,6 +49,7 @@ import { compraFolgaLiberada, dataAntecipaCiclo, folgaFuturaBloqueia, justificat
 import { motivoPossuiRetorno, normalizarCamposRetorno } from "./retornoRules";
 import { formatCityUf, normalizeNeighborhoodForDisplay, normalizeStreetForDisplay, parseCityUf } from "./collaboratorDisplay";
 import { currentCostCenterPrefill } from "./collaboratorCostCenter";
+import { chaveColaboradorCatalogo, resolveSolicitacaoColaborador, solicitacaoCorrespondeAoColaborador, solicitacaoCorrespondeBuscaPessoa } from "./solicitacaoColaborador";
 import { CostCenterCombobox } from "./CostCenterCombobox";
 import { emptyNovaSolicitacaoForm, hasDraftContent, novaSolicitacaoDraftKey, parseDraft, serializeDraft, validateDraftCatalogIds, type NovaSolicitacaoDraftData } from "./novaSolicitacaoDraft";
 import { autoMapHeaders, buildCollaboratorSuggestions, canKeepAsExternal, duplicateCpfRows, formatCpf, formatPhone, isSpreadsheetRows, isValidCpf, matchCollaborator, MAX_RH_XLSX_BYTES, normalizeCpf, normalizePhone, parseBirthDate, possibleMatches, resolveCollaboratorSuggestion, strongAuxiliaryMatches, validUf, type AddressField, type CollaboratorSuggestion, type ColumnMapping, type SpreadsheetRows } from "./addressImport";
@@ -258,7 +259,10 @@ type DashboardMonthlyCost = {
     status: Status;
     motivo: Motivo | null;
     houve_imprevisto: boolean | null;
+    funcionario_id: string | null;
+    colaborador_id?: string | null;
     funcionario?: Pick<Funcionario, "id" | "nome">;
+    colaborador?: { id:string; nome:string };
     anexos?: Array<Pick<Anexo, "complementar" | "imprevisto">>;
   };
 };
@@ -309,7 +313,7 @@ export function Dashboard({ access }: { access: Access }) {
       supabase
         .from("ro_passagem_custos")
         .select(
-          "id,solicitacao_id,tipo,descricao,valor,created_at,solicitacao:ro_passagem_solicitacoes!inner(id,status,motivo,houve_imprevisto,funcionario:funcionarios(id,nome),anexos:ro_passagem_anexos(complementar,imprevisto))",
+          "id,solicitacao_id,tipo,descricao,valor,created_at,solicitacao:ro_passagem_solicitacoes!inner(id,status,motivo,houve_imprevisto,funcionario_id,colaborador_id,funcionario:funcionarios(id,nome),colaborador:ro_funcionarios_enderecos_privados!ro_passagem_solicitacoes_colaborador_id_fkey(id,nome),anexos:ro_passagem_anexos(complementar,imprevisto))",
         )
         .gte("created_at", inicioMes)
         .lt("created_at", inicioMesSeguinte)
@@ -380,7 +384,7 @@ export function Dashboard({ access }: { access: Access }) {
           <small>
             {itens
               .slice(0, 3)
-              .map((x) => x.funcionario?.nome)
+              .map((x) => resolveSolicitacaoColaborador(x)?.nome)
               .filter(Boolean)
               .join(", ") || "Nenhum custo no período"}
           </small>
@@ -409,7 +413,7 @@ export function Dashboard({ access }: { access: Access }) {
         <small>
           {solicitacoesImprevisto
             .slice(0, 3)
-            .map((x) => x.funcionario?.nome)
+            .map((x) => resolveSolicitacaoColaborador(x)?.nome)
             .filter(Boolean)
             .join(", ") || "Nenhum imprevisto no período"}
         </small>
@@ -571,7 +575,7 @@ export function Dashboard({ access }: { access: Access }) {
                 {rows.slice(0, 5).map((r) => (
                   <Link to={`/solicitacoes/${r.id}`} key={r.id}>
                     <div>
-                      <strong>{r.funcionario?.nome}</strong>
+                      <strong>{resolveSolicitacaoColaborador(r)?.nome || "Não identificado"}</strong>
                       <span>
                         {r.origem} → {r.destino}
                       </span>
@@ -633,7 +637,7 @@ export function Dashboard({ access }: { access: Access }) {
                     {detalheCard.itens.map((item) => (
                       <tr key={item.solicitacao.id}>
                         <td>
-                          {item.solicitacao.funcionario?.nome ||
+                          {resolveSolicitacaoColaborador(item.solicitacao)?.nome ||
                             "Não identificado"}
                         </td>
                         <td>
@@ -799,12 +803,10 @@ export function Solicitacoes({
       (!imprevistoAtivo ||
         r.houve_imprevisto ||
         (r.anexos || []).some((a) => a.complementar || a.imprevisto)) &&
-      (!filters.funcionario || r.funcionario_id === filters.funcionario) &&
+      (!filters.funcionario || solicitacaoCorrespondeAoColaborador(r, filters.funcionario)) &&
       (!filters.obra || r.obra_id === filters.obra) &&
       (!filters.busca ||
-        r.funcionario?.nome
-          .toLowerCase()
-          .includes(filters.busca.toLowerCase()) ||
+        solicitacaoCorrespondeBuscaPessoa(r, filters.busca) ||
         centroCustoMatches(r.obra || { nome: "" }, filters.busca) ||
         centroCustoMatches(r.centro_custo_destino || { nome: "" }, filters.busca) ||
         centroCustoMatches(r.centro_custo_retorno || { nome: "" }, filters.busca)),
@@ -866,7 +868,7 @@ export function Solicitacoes({
         >
           <option value="">Todos os funcionários</option>
           {funcionarios.map((x) => (
-            <option value={x.id} key={x.id}>
+            <option value={chaveColaboradorCatalogo(x)} key={chaveColaboradorCatalogo(x)}>
               {x.nome}
             </option>
           ))}
@@ -908,7 +910,7 @@ export function Solicitacoes({
                 return (
                   <tr key={r.id}>
                     <td>
-                      <strong>{r.funcionario?.nome || "—"}</strong>
+                      <strong>{resolveSolicitacaoColaborador(r)?.nome || "—"}</strong>
                       <small>{formatCentroCustoLabel(r.obra) || "Sem obra"}</small>
                     </td>
                     <td>
@@ -1577,7 +1579,7 @@ export function Detalhe({ access, userId }: { access: Access; userId: string }) 
     );
   return (
     <Page
-      title={row.colaborador?.nome || row.funcionario?.nome || "Solicitação"}
+      title={resolveSolicitacaoColaborador(row)?.nome || "Solicitação"}
       subtitle={`Criada em ${dataHora(row.created_at)}`}
       action={
         <Link className="btn secondary" to="/solicitacoes">
@@ -1600,7 +1602,7 @@ export function Detalhe({ access, userId }: { access: Access; userId: string }) 
       <section className="card detail request-data">
         <h2>Dados da solicitação</h2>
         <dl>
-          <DT t="Funcionário" v={row.colaborador?.nome || row.funcionario?.nome} />
+          <DT t="Funcionário" v={resolveSolicitacaoColaborador(row)?.nome} />
           <DT
             t="Solicitante"
             v={row.solicitante?.full_name || "Solicitante sem identificação"}
@@ -1641,7 +1643,7 @@ export function Detalhe({ access, userId }: { access: Access; userId: string }) 
           <DT t="Observações" v={row.observacoes_solicitante} />
         </dl>
       </section>
-      {(access.isRh||access.isRO||access.canImport)&&enderecoResidencial&&<section className="card detail"><h2>Dados do passageiro</h2><dl><DT t="Nome" v={enderecoResidencial.nome||row.colaborador?.nome||row.funcionario?.nome}/><DT t="Data de nascimento" v={data(enderecoResidencial.data_nascimento)}/><DT t="CPF" v={formatCpf(enderecoResidencial.cpf)}/><DT t="RG" v={enderecoResidencial.rg}/><DT t="Telefone" v={formatPhone(enderecoResidencial.telefone)}/><DT t="Logradouro" v={enderecoResidencial.logradouro}/><DT t="Bairro" v={enderecoResidencial.bairro}/><DT t="Cidade / UF" v={`${enderecoResidencial.cidade||"—"} / ${enderecoResidencial.uf||"—"}`}/><DT t="Atualizado em" v={dataHora(enderecoResidencial.atualizado_em)}/>{row.destino_residencial_origem==="excepcional"&&<DT t="Destino alterado manualmente" v={row.destino_residencial_justificativa}/>}</dl></section>}
+      {(access.isRh||access.isRO||access.canImport)&&enderecoResidencial&&<section className="card detail"><h2>Dados do passageiro</h2><dl><DT t="Nome" v={enderecoResidencial.nome||resolveSolicitacaoColaborador(row)?.nome}/><DT t="Data de nascimento" v={data(enderecoResidencial.data_nascimento)}/><DT t="CPF" v={formatCpf(enderecoResidencial.cpf)}/><DT t="RG" v={enderecoResidencial.rg}/><DT t="Telefone" v={formatPhone(enderecoResidencial.telefone)}/><DT t="Logradouro" v={enderecoResidencial.logradouro}/><DT t="Bairro" v={enderecoResidencial.bairro}/><DT t="Cidade / UF" v={`${enderecoResidencial.cidade||"—"} / ${enderecoResidencial.uf||"—"}`}/><DT t="Atualizado em" v={dataHora(enderecoResidencial.atualizado_em)}/>{row.destino_residencial_origem==="excepcional"&&<DT t="Destino alterado manualmente" v={row.destino_residencial_justificativa}/>}</dl></section>}
       {(access.isRh||access.isRO||access.isAdmin)&&documentosInternos.length>0&&<section className="card"><h2>Documentos internos restritos</h2>{documentosInternos.map((d)=><div className="actions" key={d.id}><span>{d.categoria==="termo_justa_causa"?"Termo de justa causa":"Carta de pedido de demissão"}</span>{d.url&&<a className="btn secondary" href={d.url} target="_blank" rel="noreferrer">Abrir PDF</a>}</div>)}</section>}
       {access.canOperateRO && <RecusarSolicitacao row={row} onDone={load} />}
       {row.status === "recusada" && row.solicitante_id === userId && <div className="actions rejection-recreate"><Link className="btn primary" to="/nova" state={{refazer:row.id}}>Criar nova a partir desta</Link></div>}
