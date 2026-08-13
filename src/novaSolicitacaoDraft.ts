@@ -20,6 +20,11 @@ export type NovaSolicitacaoForm = {
   observacoes_solicitante: string;
   solicitacao_origem_id: string;
   folga_antecipacao_justificativa: string;
+  pix_viajante: string;
+  necessita_hospedagem: boolean;
+  hospedagem_checkin: string;
+  hospedagem_checkout: string;
+  ida_a_partir_horario: string;
 };
 
 export type NovaSolicitacaoDraftData = {
@@ -38,6 +43,8 @@ export const emptyNovaSolicitacaoForm = (): NovaSolicitacaoForm => ({
   centro_custo_destino_id: "", justificativa_excecao_prazo: "",
   observacoes_solicitante: "", solicitacao_origem_id: "",
   folga_antecipacao_justificativa: "",
+  pix_viajante: "", necessita_hospedagem: false, hospedagem_checkin: "",
+  hospedagem_checkout: "", ida_a_partir_horario: "",
 });
 
 export const novaSolicitacaoDraftKey = (userId: string) => `ro:nova-solicitacao:draft:${userId}`;
@@ -48,7 +55,9 @@ export function hasDraftContent(data: NovaSolicitacaoDraftData) {
 }
 
 export function serializeDraft(data: NovaSolicitacaoDraftData, now = new Date()) {
-  return JSON.stringify({ ...data, version: NOVA_SOLICITACAO_DRAFT_VERSION, updatedAt: now.toISOString() });
+  const safeForm: Partial<NovaSolicitacaoForm> = { ...data.form };
+  delete safeForm.pix_viajante;
+  return JSON.stringify({ ...data, form: safeForm, version: NOVA_SOLICITACAO_DRAFT_VERSION, updatedAt: now.toISOString() });
 }
 
 export function parseDraft(raw: string | null, now = Date.now()): StoredDraft | null {

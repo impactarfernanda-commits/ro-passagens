@@ -52,6 +52,7 @@ import { currentCostCenterPrefill } from "./collaboratorCostCenter";
 import { chaveColaboradorCatalogo, resolveSolicitacaoColaborador, solicitacaoCorrespondeAoColaborador, solicitacaoCorrespondeBuscaPessoa } from "./solicitacaoColaborador";
 import { CostCenterCombobox } from "./CostCenterCombobox";
 import { emptyNovaSolicitacaoForm, hasDraftContent, novaSolicitacaoDraftKey, parseDraft, serializeDraft, validateDraftCatalogIds, type NovaSolicitacaoDraftData } from "./novaSolicitacaoDraft";
+import { COMPRA_HORARIO_ALERTA, horarioLocalDaPartida, partidaAnteriorAoSolicitado } from "./passagemOperationalRules";
 import { autoMapHeaders, buildCollaboratorSuggestions, canKeepAsExternal, duplicateCpfRows, formatCpf, formatPhone, isSpreadsheetRows, isValidCpf, matchCollaborator, MAX_RH_XLSX_BYTES, normalizeCpf, normalizePhone, parseBirthDate, possibleMatches, resolveCollaboratorSuggestion, strongAuxiliaryMatches, validUf, type AddressField, type CollaboratorSuggestion, type ColumnMapping, type SpreadsheetRows } from "./addressImport";
 import type {
   Anexo,
@@ -939,7 +940,10 @@ export function Solicitacoes({
                       {r.origem} → {r.destino}
                     </td>
                     <td>{formatMotivoLabel(r.motivo)}</td>
-                    <td>{data(r.data_ida)}</td>
+                    <td>{data(r.data_ida)}
+                      {r.necessita_hospedagem&&<small>Hospedagem</small>}
+                      {r.ida_a_partir_horario&&<small>Ida ≥ {r.ida_a_partir_horario.slice(0,5)}</small>}
+                    </td>
                     <td>
                       <StatusBadge status={statusLabel[r.status]} />
                     </td>
@@ -978,6 +982,8 @@ export function NovaSolicitacao({ userId, access }: { userId: string; access: Ac
   const [form, setForm] = useState(emptyNovaSolicitacaoForm);
   const [draftReady, setDraftReady] = useState(false);
   const restoredDraftRef = useRef(false);
+  const pixEditadoRef = useRef(false);
+  const pixRequestRef = useRef(0);
   const draftKey = novaSolicitacaoDraftKey(userId);
   useEffect(() => {
     supabase
@@ -1064,6 +1070,16 @@ export function NovaSolicitacao({ userId, access }: { userId: string; access: Ac
   const permiteExcecaoPrazo = motivoPermiteExcecaoPrazo(form.motivo || null, form.desligamento_subtipo || null);
   const dataMinimaInput = dataMinimaDoInput(idaMinima, hojeLocal, gerencial, permiteExcecaoPrazo && solicitarExcecao);
   const funcionarioSelecionado = funcionarios.find((x) => x.id === form.funcionario_id);
+  useEffect(() => {
+    const selected = funcionarios.find((x) => x.id === form.funcionario_id);
+    if (!selected) return;
+    const requestId = ++pixRequestRef.current;
+    const privado = selected.funcionario_id !== selected.id;
+    supabase.rpc("ro_ultimo_pix_viajante", { p_colaborador_id: privado ? selected.id : null, p_funcionario_id: selected.funcionario_id || null }).then(({ data: ultimoPix }) => {
+      if (requestId !== pixRequestRef.current || pixEditadoRef.current) return;
+      setForm((atual) => atual.pix_viajante ? atual : { ...atual, pix_viajante: typeof ultimoPix === "string" ? ultimoPix : "" });
+    });
+  }, [form.funcionario_id, funcionarios]);
   const foraPrazo =
     Boolean(form.data_ida) && form.data_ida < idaMinima;
   const folgaAntecipada=form.motivo==="folga_campo"&&dataAntecipaCiclo(form.data_ida,cicloFolga?.proxima_folga_prevista);
@@ -1082,12 +1098,14 @@ export function NovaSolicitacao({ userId, access }: { userId: string; access: Ac
   }, [dataMinimaInput]);
   function pickFuncionario(id: string) {
     restoredDraftRef.current = false;
+    pixEditadoRef.current = false;
     const f = funcionarios.find((x) => x.id === id);
     setForm({
       ...form,
       funcionario_id: id,
       obra_id: currentCostCenterPrefill(f),
       motivo: motivoAoSelecionarFuncionario(f, form.motivo),
+      pix_viajante: "",
     });
   }
   function pickMotivo(motivo: Motivo | "") {
@@ -1112,6 +1130,9 @@ export function NovaSolicitacao({ userId, access }: { userId: string; access: Ac
       setErro("Selecione o centro de custo atual.");
       return;
     }
+    if (!form.pix_viajante.trim()) { setErro("Informe a chave PIX do próprio viajante."); return; }
+    if (form.necessita_hospedagem && (!form.hospedagem_checkin || !form.hospedagem_checkout)) { setErro("Informe Check-in e Check-out da hospedagem."); return; }
+    if (form.necessita_hospedagem && form.hospedagem_checkout < form.hospedagem_checkin) { setErro("O Check-out deve ser igual ou posterior ao Check-in."); return; }
     if (!form.motivo) {
       setErro("Selecione o motivo da solicitação.");
       return;
@@ -1253,6 +1274,13 @@ export function NovaSolicitacao({ userId, access }: { userId: string; access: Ac
           </select>
         </label>
         {form.motivo === "desligamento" && <label>Tipo de desligamento *<select required value={form.desligamento_subtipo} onChange={(e)=>{setForm({...form,desligamento_subtipo:e.target.value as DesligamentoSubtipo});setDocumento(null);}}><option value="">Selecione</option><option value="programado_outros">Desligamento programado / outros</option><option value="justa_causa">Justa causa</option><option value="pedido_demissao">Pedido de demissão</option><option value="ma_conduta">Má conduta</option></select></label>}
+        <section className="wide operational-fields">
+          <h3>Informações operacionais</h3>
+          <label>Chave PIX do viajante *<input required value={form.pix_viajante} onChange={(e)=>{pixEditadoRef.current=true;setForm({...form,pix_viajante:e.target.value})}} autoComplete="off" /></label>
+          <label>Necessita hospedagem?<select value={form.necessita_hospedagem ? "sim" : "nao"} onChange={(e)=>{const sim=e.target.value==="sim";setForm({...form,necessita_hospedagem:sim,hospedagem_checkin:sim?form.hospedagem_checkin:"",hospedagem_checkout:sim?form.hospedagem_checkout:""})}}><option value="nao">Não</option><option value="sim">Sim</option></select></label>
+          {form.necessita_hospedagem&&<><label>Check-in *<input type="date" required value={form.hospedagem_checkin} onChange={(e)=>setForm({...form,hospedagem_checkin:e.target.value})}/></label><label>Check-out *<input type="date" required min={form.hospedagem_checkin||undefined} value={form.hospedagem_checkout} onChange={(e)=>setForm({...form,hospedagem_checkout:e.target.value})}/></label></>}
+          <label>Ida a partir do horário<input type="time" value={form.ida_a_partir_horario} onChange={(e)=>setForm({...form,ida_a_partir_horario:e.target.value})}/></label>
+        </section>
         {mensagemAntecedencia(form.motivo || null, form.desligamento_subtipo || null) && <div className="alert wide">{mensagemAntecedencia(form.motivo || null, form.desligamento_subtipo || null)}</div>}
         {form.motivo==="folga_campo"&&form.funcionario_id&&<section className="alert wide cycle-info">{cicloLoading?<span>Consultando ciclo...</span>:cicloFolga?.possui_historico?<><strong>Última folga de campo: {data(cicloFolga.ultima_folga_realizada)}</strong><span>Próxima folga prevista: {data(cicloFolga.proxima_folga_prevista)}</span><span>Data recomendada para solicitar: {data(cicloFolga.data_limite_recomendada)}</span></>:<span>{SEM_HISTORICO_FOLGA}</span>}{cicloFolga?.solicitacao_futura_existente_id&&<strong>Já existe uma solicitação de folga de campo para este funcionário em {data(cicloFolga.solicitacao_futura_data)}. Status: {statusLabel[cicloFolga.solicitacao_futura_status as Status]||cicloFolga.solicitacao_futura_status}.</strong>}</section>}
         <label>
@@ -1626,6 +1654,9 @@ export function Detalhe({ access, userId }: { access: Access; userId: string }) 
           <DT t="Origem" v={row.origem} />
           <DT t="Destino" v={row.destino} />
           <DT t="Ida prevista" v={data(row.data_ida)} />
+          {(access.isRO||access.isAdmin||row.solicitante_id===userId)&&<DT t="PIX do viajante" v={row.pix_viajante} />}
+          <DT t="Hospedagem" v={row.necessita_hospedagem ? `${data(row.hospedagem_checkin)} → ${data(row.hospedagem_checkout)}` : "Não necessária"} />
+          {row.ida_a_partir_horario&&<DT t="Horário" v={`Ida a partir de ${row.ida_a_partir_horario.slice(0,5)}`} />}
           {(access.isRh||access.isRO||access.isAdmin)&&row.desligamento_subtipo&&<DT t="Tipo de desligamento" v={row.desligamento_subtipo.replaceAll("_"," ")} />}
           {motivoPossuiRetorno(row.motivo) && (
             <>
@@ -2043,6 +2074,9 @@ function Compra({
   const [draggingPdfs, setDraggingPdfs] = useState(false);
   const dragDepth = useRef(0);
   const [erro, setErro] = useState("");
+  const [confirmarHorario, setConfirmarHorario] = useState(false);
+  const confirmacaoHorarioRef = useRef(false);
+  const compraFormRef = useRef<HTMLFormElement>(null);
   const [form, setForm] = useState<CompraForm>(
     savedDraft?.form || initialCompraForm(row),
   );
@@ -2196,6 +2230,11 @@ function Compra({
       );
       return;
     }
+    const primeiraPartidaLocalParaValidar = pdfs.map((pdf) => pdf.partida_em).filter(Boolean).sort()[0];
+    const horarioAnterior = !complementar && partidaAnteriorAoSolicitado(primeiraPartidaLocalParaValidar, row.ida_a_partir_horario);
+    if (horarioAnterior && !confirmacaoHorarioRef.current) { setConfirmarHorario(true); return; }
+    const divergenciaConfirmada = horarioAnterior && confirmacaoHorarioRef.current;
+    confirmacaoHorarioRef.current = false;
     setBusy(true);
     setErro("");
     const storagePaths: string[] = [];
@@ -2310,6 +2349,8 @@ function Compra({
             p_chegada_em: null,
             p_observacoes_ro: form.observacoes_ro,
             p_custos: custos,
+            p_horario_anterior_confirmado: divergenciaConfirmada,
+            p_partida_horario_local: horarioLocalDaPartida(primeiraPartidaLocal),
           });
       if (error) throw new Error(error.message);
       purchaseDraftBySolicitacaoId.delete(draftKey);
@@ -2364,7 +2405,7 @@ function Compra({
     );
 
   return (
-    <form className="card form purchase" onSubmit={submit}>
+    <form ref={compraFormRef} className="card form purchase" onSubmit={submit}>
       <div className="wide section-title">
         <ShoppingCart />
         <div>
@@ -2385,6 +2426,9 @@ function Compra({
         </button>
       </div>
       {erro && <div className="error wide">{erro}</div>}
+      {row.necessita_hospedagem&&<div className="alert wide"><strong>Hospedagem: {data(row.hospedagem_checkin)} → {data(row.hospedagem_checkout)}</strong></div>}
+      {row.ida_a_partir_horario&&<div className="alert wide"><strong>Ida a partir de {row.ida_a_partir_horario.slice(0,5)}</strong></div>}
+      {confirmarHorario&&<div className="rejection-backdrop" role="dialog" aria-modal="true" aria-labelledby="horario-confirmacao-title"><div className="rejection-modal"><h2 id="horario-confirmacao-title">{COMPRA_HORARIO_ALERTA}</h2><div className="actions"><button type="button" className="btn secondary" onClick={()=>setConfirmarHorario(false)}>Voltar</button><button type="button" className="btn primary" onClick={()=>{confirmacaoHorarioRef.current=true;setConfirmarHorario(false);compraFormRef.current?.requestSubmit()}}>Confirmar mesmo assim</button></div></div></div>}
       {valoresDivergentes && (
         <div className="error wide">
           Documentos parecem ser da mesma passagem, mas possuem valores
