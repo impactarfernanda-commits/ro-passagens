@@ -53,6 +53,7 @@ import { chaveColaboradorCatalogo, resolveSolicitacaoColaborador, solicitacaoCor
 import { CostCenterCombobox } from "./CostCenterCombobox";
 import { emptyNovaSolicitacaoForm, hasDraftContent, novaSolicitacaoDraftKey, parseDraft, serializeDraft, validateDraftCatalogIds, type NovaSolicitacaoDraftData } from "./novaSolicitacaoDraft";
 import { COMPRA_HORARIO_ALERTA, horarioLocalDaPartida, partidaAnteriorAoSolicitado } from "./passagemOperationalRules";
+import { HOSPEDAGEM_ATTACHMENT_TYPE, isHospedagemAttachment, parseHospedagemValor } from "./hospedagemOperationalRules";
 import { autoMapHeaders, buildCollaboratorSuggestions, canKeepAsExternal, duplicateCpfRows, formatCpf, formatPhone, isSpreadsheetRows, isValidCpf, matchCollaborator, MAX_RH_XLSX_BYTES, normalizeCpf, normalizePhone, parseBirthDate, possibleMatches, resolveCollaboratorSuggestion, strongAuxiliaryMatches, validUf, type AddressField, type CollaboratorSuggestion, type ColumnMapping, type SpreadsheetRows } from "./addressImport";
 import type {
   Anexo,
@@ -1655,7 +1656,8 @@ export function Detalhe({ access, userId }: { access: Access; userId: string }) 
           <DT t="Destino" v={row.destino} />
           <DT t="Ida prevista" v={data(row.data_ida)} />
           {(access.isRO||access.isAdmin||row.solicitante_id===userId)&&<DT t="PIX do viajante" v={row.pix_viajante} />}
-          <DT t="Hospedagem" v={row.necessita_hospedagem ? `${data(row.hospedagem_checkin)} → ${data(row.hospedagem_checkout)}` : "Não necessária"} />
+          <DT t="Hospedagem" v={row.necessita_hospedagem ? "Hospedagem necessária" : "Não necessária"} />
+          {row.necessita_hospedagem&&<><DT t="Check-in" v={data(row.hospedagem_checkin)}/><DT t="Check-out" v={data(row.hospedagem_checkout)}/><DT t="Valor gasto com hospedagem" v={row.custos?.find((c)=>c.tipo==="hospedagem") ? dinheiro(Number(row.custos.find((c)=>c.tipo==="hospedagem")?.valor)) : "Ainda não registrado"}/><DT t="Vouchers de hospedagem" v={`${(row.anexos||[]).filter((a)=>isHospedagemAttachment(a.tipo)).length} PDF(s)`}/></>}
           {row.ida_a_partir_horario&&<DT t="Horário" v={`Ida a partir de ${row.ida_a_partir_horario.slice(0,5)}`} />}
           {(access.isRh||access.isRO||access.isAdmin)&&row.desligamento_subtipo&&<DT t="Tipo de desligamento" v={row.desligamento_subtipo.replaceAll("_"," ")} />}
           {motivoPossuiRetorno(row.motivo) && (
@@ -1691,6 +1693,7 @@ export function Detalhe({ access, userId }: { access: Access; userId: string }) 
       {access.canOperateRO && row.status === "passagem_comprada" && (
         <Compra row={row} onDone={load} complementar />
       )}
+      {access.canOperateRO && row.necessita_hospedagem && !["cancelada","recusada"].includes(row.status) && <HospedagemOperacional row={row} onDone={load} />}
       <PassagemComprada
         anexos={row.anexos || []}
         custos={row.custos || []}
@@ -1844,6 +1847,68 @@ function DT({ t, v }: { t: string; v?: string | null }) {
 function canViewFinancialCosts(access: Access) {
   return access.canViewAll;
 }
+function HospedagemOperacional({ row, onDone }: { row: Solicitacao; onDone: () => void }) {
+  const custo = row.custos?.find((item) => item.tipo === "hospedagem");
+  const vouchers = (row.anexos || []).filter((item) => isHospedagemAttachment(item.tipo));
+  const [valor, setValor] = useState(custo ? String(custo.valor) : "");
+  const [files, setFiles] = useState<File[]>([]);
+  const [busy, setBusy] = useState(false);
+  const [erro, setErro] = useState("");
+
+  async function salvar(event: React.FormEvent) {
+    event.preventDefault();
+    const parsed = parseHospedagemValor(valor);
+    if (parsed === null) { setErro("Informe um valor de hospedagem maior que zero."); return; }
+    setBusy(true); setErro("");
+    const uploaded: string[] = [];
+    const inserted: string[] = [];
+    try {
+      const user = (await supabase.auth.getUser()).data.user;
+      if (!user) throw new Error("Sessão expirada. Entre novamente.");
+      for (const file of files) {
+        const invalid = validatePdfFile(file);
+        if (invalid) throw new Error(`${file.name}: ${invalid}`);
+        const safeName = file.name.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-zA-Z0-9._-]/g, "-");
+        const path = `${row.id}/${crypto.randomUUID()}-${safeName}`;
+        const upload = await supabase.storage.from("ro-passagem-anexos").upload(path, file, { contentType: "application/pdf", upsert: false });
+        if (upload.error) throw new Error(`Não foi possível enviar ${file.name}.`);
+        uploaded.push(path);
+        const attachment = await supabase.from("ro_passagem_anexos").insert({
+          solicitacao_id: row.id, tipo: HOSPEDAGEM_ATTACHMENT_TYPE, nome_arquivo: file.name,
+          storage_path: path, mime_type: file.type, tamanho_bytes: file.size, uploaded_by: user.id,
+        }).select("id").single();
+        if (attachment.error || !attachment.data) throw new Error(`Não foi possível vincular ${file.name} à hospedagem.`);
+        inserted.push(attachment.data.id);
+      }
+      const result = await supabase.rpc("ro_registrar_hospedagem", { p_solicitacao_id: row.id, p_valor_total: parsed });
+      if (result.error) throw new Error(result.error.message);
+      setFiles([]); window.alert(custo ? "Hospedagem atualizada." : "Hospedagem registrada."); onDone();
+    } catch (cause) {
+      if (inserted.length) await supabase.from("ro_passagem_anexos").delete().in("id", inserted);
+      if (uploaded.length) await supabase.storage.from("ro-passagem-anexos").remove(uploaded);
+      setErro(cause instanceof Error ? cause.message : "Não foi possível salvar a hospedagem.");
+    } finally { setBusy(false); }
+  }
+
+  async function remover(anexo: Anexo) {
+    if (!window.confirm(`Remover ${anexo.nome_arquivo}?`)) return;
+    setBusy(true); setErro("");
+    const storage = await supabase.storage.from("ro-passagem-anexos").remove([anexo.storage_path]);
+    const metadata = storage.error ? null : await supabase.from("ro_passagem_anexos").delete().eq("id", anexo.id);
+    if (storage.error || metadata?.error) setErro("Não foi possível remover o voucher de hospedagem."); else onDone();
+    setBusy(false);
+  }
+
+  return <form className="card form hospitality" onSubmit={salvar}>
+    <div className="wide section-title"><FileText/><div><h2>Hospedagem</h2><p>Hospedagem necessária · Check-in: {data(row.hospedagem_checkin)} · Check-out: {data(row.hospedagem_checkout)}</p></div></div>
+    {erro && <div className="error wide">{erro}</div>}
+    <label className="wide">Valor da hospedagem (R$)<input type="number" min="0.01" step="0.01" required value={valor} onChange={(event)=>setValor(event.target.value)} /><small>Valor total gasto com a hospedagem deste atendimento, não o valor por diária.</small></label>
+    <label className="pdf-drop-zone wide"><Upload size={20}/><span><strong>Arraste o PDF aqui ou clique para selecionar</strong><small>Voucher opcional · vários PDFs de até 10 MB cada.</small></span><input type="file" accept="application/pdf,.pdf" multiple disabled={busy} onChange={(event)=>{setFiles(Array.from(event.target.files || []));event.target.value="";}}/></label>
+    {files.length > 0 && <div className="wide attachment-empty">Prontos para envio: {files.map((file)=>file.name).join(", ")}</div>}
+    {vouchers.length > 0 && <div className="wide attachment-list">{vouchers.map((anexo)=><div key={anexo.id}><span><strong>{anexo.nome_arquivo}</strong><small>Voucher de hospedagem</small></span><button type="button" className="btn danger" disabled={busy} onClick={()=>void remover(anexo)}>Remover</button></div>)}</div>}
+    <div className="actions wide"><button className="btn primary" disabled={busy}>{busy ? "Salvando..." : custo ? "Atualizar hospedagem" : "Salvar hospedagem"}</button></div>
+  </form>;
+}
 function PassagemComprada({
   anexos,
   custos,
@@ -1869,7 +1934,9 @@ function PassagemComprada({
     custos
       .filter((c) => c.tipo === tipo)
       .reduce((total, c) => total + Number(c.valor), 0);
-  const complementares = anexos.filter((a) => a.complementar);
+  const anexosPassagem = anexos.filter((a) => !isHospedagemAttachment(a.tipo));
+  const anexosHospedagem = anexos.filter((a) => isHospedagemAttachment(a.tipo));
+  const complementares = anexosPassagem.filter((a) => a.complementar);
   const custoComplementar = custos
     .filter(
       (c) =>
@@ -1878,14 +1945,16 @@ function PassagemComprada({
     )
     .reduce((total, custo) => total + Number(custo.valor), 0);
   const totalPassagens = soma("passagem");
+  const hospedagem = soma("hospedagem");
   const uber = soma("uber");
   const refeicao = soma("refeicao");
   const outros = soma("outros");
-  const totalGeral = totalPassagens + uber + refeicao + outros;
+  const totalGeral = totalPassagens + hospedagem + uber + refeicao + outros;
   const custoLabel = (custo: Custo) =>
     custo.descricao ||
     {
       passagem: "Passagem",
+      hospedagem: "Hospedagem",
       uber: "Uber/local",
       refeicao: "Refeição/ajuda",
       outros: "Outros",
@@ -1940,11 +2009,11 @@ function PassagemComprada({
         </section>
       )}
       <h3 className="documents-heading">Documentos anexados</h3>
-      {anexos.length === 0 ? (
+      {anexosPassagem.length === 0 ? (
         <p className="attachment-empty">Nenhum PDF anexado.</p>
       ) : (
         <div className="attachment-list">
-          {anexos.map((anexo) => (
+          {anexosPassagem.map((anexo) => (
             <div
               key={anexo.id}
               className={`purchased-ticket ${anexo.complementar ? "complementary-ticket" : ""}`}
@@ -1987,12 +2056,14 @@ function PassagemComprada({
           ))}
         </div>
       )}
+      {anexosHospedagem.length > 0 && <><h3 className="documents-heading">Vouchers de hospedagem</h3><div className="attachment-list">{anexosHospedagem.map((anexo)=><div key={anexo.id}><div><FileText size={20}/><span><strong>{anexo.nome_arquivo}</strong><small>Voucher de hospedagem</small></span></div><button className="btn secondary" type="button" onClick={()=>abrir(anexo)}><ExternalLink size={16}/>Abrir PDF</button></div>)}</div></>}
       {canViewCosts && (
         <div className="purchase-summary">
           <div>
             <span>Passagens</span>
             <strong>{dinheiro(totalPassagens)}</strong>
           </div>
+          <div><span>Hospedagem</span><strong>{dinheiro(hospedagem)}</strong></div>
           <div>
             <span>Uber/local</span>
             <strong>{dinheiro(uber)}</strong>

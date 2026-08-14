@@ -40,7 +40,7 @@ export type Perfil = {
 };
 export type Custo = {
   id: string;
-  tipo: "passagem" | "uber" | "refeicao" | "outros";
+  tipo: "passagem" | "hospedagem" | "uber" | "refeicao" | "outros";
   descricao: string | null;
   valor: number;
   centro_custo_id: string | null;
