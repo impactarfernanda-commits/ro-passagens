@@ -54,6 +54,7 @@ import { CostCenterCombobox } from "./CostCenterCombobox";
 import { emptyNovaSolicitacaoForm, hasDraftContent, novaSolicitacaoDraftKey, parseDraft, serializeDraft, validateDraftCatalogIds, type NovaSolicitacaoDraftData } from "./novaSolicitacaoDraft";
 import { COMPRA_HORARIO_ALERTA, horarioLocalDaPartida, partidaAnteriorAoSolicitado } from "./passagemOperationalRules";
 import { HOSPEDAGEM_ATTACHMENT_TYPE, isHospedagemAttachment, parseHospedagemValor } from "./hospedagemOperationalRules";
+import { isEditableOperationalCost, parseOperationalCostValue } from "./operationalCostRules";
 import { autoMapHeaders, buildCollaboratorSuggestions, canKeepAsExternal, duplicateCpfRows, formatCpf, formatPhone, isSpreadsheetRows, isValidCpf, matchCollaborator, MAX_RH_XLSX_BYTES, normalizeCpf, normalizePhone, parseBirthDate, possibleMatches, resolveCollaboratorSuggestion, strongAuxiliaryMatches, validUf, type AddressField, type CollaboratorSuggestion, type ColumnMapping, type SpreadsheetRows } from "./addressImport";
 import type {
   Anexo,
@@ -1698,6 +1699,9 @@ export function Detalhe({ access, userId }: { access: Access; userId: string }) 
         anexos={row.anexos || []}
         custos={row.custos || []}
         canViewCosts={canViewFinancialCosts(access)}
+        canEditCosts={access.canOperateRO && !["cancelada", "recusada"].includes(row.status)}
+        solicitacaoId={row.id}
+        onCostUpdated={load}
       />
       <div className="grid two detail">
         <section className="card">
@@ -1913,10 +1917,16 @@ function PassagemComprada({
   anexos,
   custos,
   canViewCosts,
+  canEditCosts,
+  solicitacaoId,
+  onCostUpdated,
 }: {
   anexos: Anexo[];
   custos: Custo[];
   canViewCosts: boolean;
+  canEditCosts: boolean;
+  solicitacaoId: string;
+  onCostUpdated: () => void;
 }) {
   const [erro, setErro] = useState("");
   async function abrir(anexo: Anexo) {
@@ -1991,19 +2001,9 @@ function PassagemComprada({
             </p>
           ) : (
             <div className="financial-cost-list">
-              {custos.map((custo) => (
-                <div key={custo.id}>
-                  <span>
-                    <strong>{custoLabel(custo)}</strong>
-                    <small>
-                      {custo.tipo === "passagem"
-                        ? "Passagem comprada"
-                        : "Custo adicional"}
-                    </small>
-                  </span>
-                  <strong>{dinheiro(Number(custo.valor))}</strong>
-                </div>
-              ))}
+              {custos.map((custo) => <OperationalCostRow key={custo.id} custo={custo}
+                label={custoLabel(custo)} canEdit={canEditCosts && isEditableOperationalCost(custo.tipo)}
+                solicitacaoId={solicitacaoId} onDone={onCostUpdated} />)}
             </div>
           )}
         </section>
@@ -2084,6 +2084,38 @@ function PassagemComprada({
       )}
     </section>
   );
+}
+
+function OperationalCostRow({ custo, label, canEdit, solicitacaoId, onDone }: {
+  custo: Custo; label: string; canEdit: boolean; solicitacaoId: string; onDone: () => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [valor, setValor] = useState(String(custo.valor));
+  const [busy, setBusy] = useState(false);
+  const [erro, setErro] = useState("");
+  async function salvar() {
+    const parsed = parseOperationalCostValue(valor);
+    if (parsed === null) { setErro("Informe um valor maior que zero, com até duas casas decimais."); return; }
+    setBusy(true); setErro("");
+    const result = await supabase.rpc("ro_atualizar_custo_operacional", {
+      p_solicitacao_id: solicitacaoId, p_custo_id: custo.id, p_novo_valor: parsed,
+    });
+    setBusy(false);
+    if (result.error) { setErro(result.error.message); return; }
+    setEditing(false); onDone();
+  }
+  return <div className="operational-cost-row">
+    <span><strong>{label}</strong><small>{custo.tipo === "passagem" ? "Passagem comprada" : "Custo adicional"}</small></span>
+    {editing ? <div className="operational-cost-editor">
+      <label>Valor de {label}<input autoFocus type="number" min="0.01" step="0.01" value={valor}
+        onChange={(event)=>setValor(event.target.value)} disabled={busy}/></label>
+      {erro && <small className="error">{erro}</small>}
+      <div className="actions"><button type="button" className="btn secondary" disabled={busy}
+        onClick={()=>{setEditing(false);setValor(String(custo.valor));setErro("");}}>Cancelar</button>
+        <button type="button" className="btn primary" disabled={busy} onClick={()=>void salvar()}>{busy?"Salvando...":"Salvar alteração"}</button></div>
+    </div> : <div className="operational-cost-value"><strong>{dinheiro(Number(custo.valor))}</strong>
+      {canEdit && <button type="button" className="btn-link" onClick={()=>setEditing(true)}>Editar valor</button>}</div>}
+  </div>;
 }
 type PdfDraft = {
   id: string;
