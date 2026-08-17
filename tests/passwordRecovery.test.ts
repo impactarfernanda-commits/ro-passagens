@@ -29,7 +29,7 @@ test("rota pública aceita implicit, code e token_hash sem afetar callback SSO",
   assert.match(page, /exchangeCodeForSession\(params\.code\)/);
   assert.match(page, /verifyOtp\(\{ token_hash: params\.tokenHash, type: "recovery" \}\)/);
   assert.match(page, /clearRecoveryUrl\(\)/);
-  assert.match(sso, /redirect\.pathname !== "\/sso\/callback"/);
+  assert.match(sso, /validObrasCallbackUrl\(data\.redirect_url, OBRAS_ORIGIN\)/);
 });
 
 test("nova senha preserva mínimo, confirmação, envio único e payload mínimo", () => {

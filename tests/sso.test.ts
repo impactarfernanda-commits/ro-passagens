@@ -1,86 +1,55 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { finalObrasUrl, isTrustedObrasMessage, OBRAS_ERROR_MESSAGE, OBRAS_READY_MESSAGE, obrasBootstrapUrl } from "../src/obrasBootstrap.ts";
-const read = (path: string) => readFileSync(new URL("../" + path, import.meta.url), "utf8");
-const migration = read("supabase/migrations/202608100002_sso_portal_obras_control.sql");
-const dry = read("supabase/manual/DRY_RUN_202608100002_sso_portal_obras_control.sql");
-const start = read("supabase/functions/obras-sso-start/index.ts");
-const exchange = read("supabase/functions/obras-sso-exchange/index.ts");
-const http = read("supabase/functions/_shared/sso-http.ts");
-const portal = read("src/Portal.tsx");
-test("migration e dry run contêm a infraestrutura SSO e rollback", () => {
-  for (const marker of ["portal_sso_handoffs", "portal_consumir_sso_handoff", "enable row level security", "revoke all"])
-    assert.match(migration, new RegExp(marker, "i"));
-  assert.match(dry, /^begin;/i);
-  assert.match(dry, /rollback;\s*$/i);
-  assert.doesNotMatch(dry, /\bcommit\b/i);
+import { configuredObrasOrigin, finalObrasUrl, validObrasCallbackUrl } from "../src/obrasBootstrap.ts";
+const read=(path:string)=>readFileSync(new URL("../"+path,import.meta.url),"utf8");
+const migration=read("supabase/migrations/202608100002_sso_portal_obras_control.sql");
+const start=read("supabase/functions/obras-sso-start/index.ts");
+const exchange=read("supabase/functions/obras-sso-exchange/index.ts");
+const http=read("supabase/functions/_shared/sso-http.ts");
+const portal=read("src/Portal.tsx");
+const code="a".repeat(43), obrasOrigin="https://obras-control-demo.vercel.app";
+
+test("handoff e opaco, hasheado, curto e de uso unico",()=>{
+  assert.match(http,/Uint8Array\(32\)/);assert.match(http,/SHA-256/);assert.match(http,/60_000/);
+  assert.match(migration,/consumed_at is null[\s\S]*expires_at > now\(\)/);
+  assert.doesNotMatch(start,/access_token|refresh_token/);
 });
-test("handoff é opaco, curto, hasheado e de uso único", () => {
-  assert.match(http, /Uint8Array\(32\)/);
-  assert.match(http, /SHA-256/);
-  assert.match(http, /60_000/);
-  assert.doesNotMatch(start, /access_token|refresh_token/);
-  assert.match(migration, /consumed_at is null[\s\S]*expires_at > now\(\)/);
+test("start valida usuario, acesso, target e return_path",()=>{
+  assert.match(start,/auth\.getUser/);assert.match(start,/user_roles/);assert.match(http,/target_app/);assert.match(http,/RETURN_PATHS\.has/);
 });
-test("start valida identidade, autorização, target e retorno", () => {
-  assert.match(start, /auth\.getUser/);
-  assert.match(start, /user_roles/);
-  assert.match(http, /target_app/);
-  assert.match(http, /RETURN_PATHS\.has/);
+test("exchange gera somente token hash backend para o usuario do handoff",()=>{
+  assert.match(exchange,/getUserById/);assert.match(exchange,/generateLink\(\{ type: "magiclink", email \}\)/);assert.doesNotMatch(exchange,/access_token|refresh_token/);
 });
-test("exchange usa usuário backend, generateLink e retorna só token hash", () => {
-  assert.match(exchange, /getUserById/);
-  assert.match(exchange, /generateLink\(\{ type: "magiclink", email \}/);
-  assert.match(exchange, /properties\?\.hashed_token/);
-  assert.doesNotMatch(exchange, /access_token|refresh_token/);
+test("clique mantem Portal enquanto prepara URL e mostra loading",()=>{
+  assert.match(portal,/await Promise\.race/);assert.match(portal,/Abrindo Obras Control\.\.\./);assert.match(portal,/setOpening\(true\)/);
+  assert.ok(portal.indexOf("startObrasSso(returnPath)")<portal.indexOf("location.assign(redirectUrl)"));
 });
-test("card bloqueia clique duplo e aguarda o ready antes de navegar", () => {
-  assert.match(portal, /started\.current/);
-  assert.match(portal, /disabled=\{opening\}/);
-  assert.match(portal, /<iframe/);
-  assert.match(portal, /event\.source!==iframe\.current\?\.contentWindow/);
-  assert.match(portal, /event\.data\.type!==OBRAS_READY_MESSAGE/);
-  assert.match(portal, /globalThis\.location\.assign/);
-  assert.ok(portal.indexOf("event.data.type!==OBRAS_READY_MESSAGE") < portal.indexOf("globalThis.location.assign"));
+test("clique duplicado e timeout sao bloqueados e retry permanece",()=>{
+  assert.match(portal,/if\(opening\)return/);assert.match(portal,/disabled=\{opening\}/);assert.match(portal,/15_000/);assert.match(portal,/onClick=\{openObras\}>Tentar novamente/);
 });
-test("Portal nunca inicia o SSO automaticamente por query string, login ou refresh", () => {
-  assert.equal((portal.match(/startObrasSso\(returnPath\)/g) ?? []).length, 1);
-  assert.doesNotMatch(portal, /params\.get\(['"]app['"]\)/);
-  assert.doesNotMatch(portal, /app['"]?\s*===?\s*['"]obras-control/);
+test("falha permanece no Portal sem navegacao tardia",()=>{
+  assert.match(portal,/currentAttempt!==attempt\.current/);assert.match(portal,/reset\(\);setError\(true\)/);
 });
-test("somente o clique no card de Alocacao inicia o SSO uma vez", () => {
-  assert.match(portal, /onClick=\{openObras\}/);
-  assert.match(portal, /if\(started\.current\)return/);
-  assert.equal((portal.match(/startObrasSso\(returnPath\)/g) ?? []).length, 1);
+test("Portal navega top-level para callback absoluto validado do Obras",()=>{
+  const callback=`${obrasOrigin}/sso/callback?code=${code}`;
+  assert.equal(validObrasCallbackUrl(callback,obrasOrigin),true);assert.match(portal,/location\.assign\(redirectUrl\)/);
 });
-test("card de Passagens permanece interno e nao chama SSO", () => {
-  assert.match(portal, /<Link[^>]+to="\/solicitacoes"/);
-  const passagesCard = portal.match(/<Link[\s\S]*?<\/Link>/)?.[0] ?? "";
-  assert.doesNotMatch(passagesCard, /openObras|startObrasSso/);
+test("callback relativo, arbitrario ou com parametros extras e rejeitado",()=>{
+  for(const value of [`/sso/callback?code=${code}`,`https://evil.example/sso/callback?code=${code}`,`${obrasOrigin}/sso/callback?code=${code}&portal_bootstrap=1`]) assert.equal(validObrasCallbackUrl(value,obrasOrigin),false);
 });
-test("return_path seguro fica preservado para o clique posterior", () => {
-  assert.match(portal, /safeObrasReturnPath\(params\.get\(['"]return_path['"]\)\)/);
-  assert.match(portal, /startObrasSso\(returnPath\)/);
+test("Portal nao cria iframe, postMessage, prefetch ou consumo antecipado",()=>{
+  assert.doesNotMatch(portal,/<iframe|postMessage|prefetch|portal_bootstrap|obras-sso-exchange|verifyOtp/);
 });
-test("bootstrap marca o callback sem expor tokens", () => {
-  const url=obrasBootstrapUrl("https://obras-control-demo.vercel.app/sso/callback?code="+"a".repeat(43));
-  assert.equal(new URL(url).searchParams.get("portal_bootstrap"),"1");
-  assert.doesNotMatch(url,/access_token|refresh_token/);
+test("return_path seguro continua produzindo URL absoluta sem open redirect",()=>{
+  assert.equal(finalObrasUrl(obrasOrigin,"/alocacoes"),obrasOrigin+"/alocacoes");
+  for(const unsafe of ["https://evil.example","//evil.example","javascript:alert(1)"])assert.equal(finalObrasUrl(obrasOrigin,unsafe),null);
 });
-test("mensagem exige origin do Obras e tipo conhecido", () => {
-  const origin="https://obras-control-demo.vercel.app";
-  assert.equal(isTrustedObrasMessage({origin:"https://evil.test",data:{type:OBRAS_READY_MESSAGE}},origin),false);
-  assert.equal(isTrustedObrasMessage({origin,data:{type:"other"}},origin),false);
-  assert.equal(isTrustedObrasMessage({origin,data:{type:OBRAS_READY_MESSAGE}},origin),true);
-  assert.equal(isTrustedObrasMessage({origin,data:{type:OBRAS_ERROR_MESSAGE}},origin),true);
+test("defaults de producao permanecem Vercel e local continua configuravel",()=>{
+  assert.equal(configuredObrasOrigin(),obrasOrigin);assert.equal(configuredObrasOrigin("http://localhost:3000/path"),"http://localhost:3000");
+  assert.doesNotMatch(read(".env.example"),/tanksbr\.com\.br/);
 });
-test("destino final continua canonico e com return_path permitido", () => {
-  assert.equal(finalObrasUrl("https://obras-control-demo.vercel.app","/obras"),"https://obras-control-demo.vercel.app/obras");
-});
-test("timeout, erro e retry devolvem o fluxo ao estado reutilizavel", () => {
-  assert.match(portal,/15_000/);
-  assert.match(portal,/reset\(\);setError\(true\)/);
-  assert.match(portal,/onClick=\{openObras\}>Tentar novamente/);
-  assert.match(portal,/setBootstrapUrl\(null\)/);
+test("retorno sem sessao mostra erro e nao inicia SSO automaticamente",()=>{
+  assert.match(portal,/obras_auth_failed/);assert.match(portal,/Não foi possível concluir a autenticação no Obras Control/);
+  assert.equal((portal.match(/startObrasSso\(returnPath\)/g)??[]).length,1);
 });

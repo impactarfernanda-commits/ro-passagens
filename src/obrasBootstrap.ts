@@ -1,17 +1,24 @@
-export const OBRAS_READY_MESSAGE = "obras-control-ready";
-export const OBRAS_ERROR_MESSAGE = "obras-control-error";
+export const LEGACY_OBRAS_ORIGIN = "https://obras-control-demo.vercel.app";
 
-export function obrasBootstrapUrl(redirectUrl: string) {
-  const url = new URL(redirectUrl);
-  url.searchParams.set("portal_bootstrap", "1");
-  return url.toString();
+export function configuredObrasOrigin(value?: string) {
+  return new URL(value || LEGACY_OBRAS_ORIGIN).origin;
 }
+
+const TEMPORARY_AUTH_PARAMS = new Set(["portal_bootstrap", "token_hash", "type", "code"]);
 
 export function finalObrasUrl(origin: string, returnPath: string) {
-  return new URL(returnPath, origin).toString();
+  const canonicalOrigin = new URL(origin).origin;
+  if (!returnPath.startsWith("/") || returnPath.startsWith("//")) return null;
+  const destination = new URL(returnPath, canonicalOrigin);
+  if (destination.origin !== canonicalOrigin || destination.pathname === "/sso/callback" || [...TEMPORARY_AUTH_PARAMS].some((param) => destination.searchParams.has(param))) return null;
+  return destination.toString();
 }
 
-export function isTrustedObrasMessage(event: Pick<MessageEvent, "origin" | "data">, expectedOrigin: string) {
-  if (event.origin !== new URL(expectedOrigin).origin || !event.data || typeof event.data !== "object") return false;
-  return event.data.type === OBRAS_READY_MESSAGE || event.data.type === OBRAS_ERROR_MESSAGE;
+export function validObrasCallbackUrl(value: string, origin: string) {
+  try {
+    const callback = new URL(value);
+    return callback.origin === new URL(origin).origin && callback.pathname === "/sso/callback" && /^[A-Za-z0-9_-]{43}$/u.test(callback.searchParams.get("code") || "") && callback.searchParams.size === 1;
+  } catch {
+    return false;
+  }
 }

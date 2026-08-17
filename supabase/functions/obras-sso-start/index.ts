@@ -3,6 +3,7 @@ import { handleSsoStart } from "../_shared/sso-http.ts";
 
 Deno.serve((req) => handleSsoStart(req, {
   obrasOrigin: Deno.env.get("OBRAS_CONTROL_ORIGIN") ?? "https://obras-control-demo.vercel.app",
+  portalOrigin: Deno.env.get("PORTAL_ORIGIN") ?? "https://portal-tks-br.vercel.app",
   authenticate: async (authorization) => {
     const auth = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_ANON_KEY")!, {
       global: { headers: { Authorization: authorization } },

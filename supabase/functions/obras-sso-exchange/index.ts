@@ -2,6 +2,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2.52.0";
 import { handleSsoExchange } from "../_shared/sso-http.ts";
 
 Deno.serve((req) => handleSsoExchange(req, {
+  obrasOrigin: Deno.env.get("OBRAS_CONTROL_ORIGIN") ?? "https://obras-control-demo.vercel.app",
   consumeHandoff: async (codeHash) => {
     const admin = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!, {
       auth: { persistSession: false, autoRefreshToken: false },

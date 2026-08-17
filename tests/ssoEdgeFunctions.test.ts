@@ -7,12 +7,18 @@ const obrasOrigin = "https://obras-control-demo.vercel.app";
 const validCode = "A".repeat(43);
 const startDeps = (overrides: Partial<StartDependencies> = {}): StartDependencies => ({
   authenticate: async () => "user-1", canAccessObras: async () => true,
-  persistHandoff: async () => undefined, obrasOrigin, ...overrides,
+  persistHandoff: async () => undefined, obrasOrigin, portalOrigin, ...overrides,
 });
 const exchangeDeps = (overrides: Partial<ExchangeDependencies> = {}): ExchangeDependencies => ({
+  obrasOrigin,
   consumeHandoff: async () => ({ user_id: "user-1", return_path: "/alocacoes" }),
   getUserEmail: async () => "user@example.com",
   generateTokenHash: async () => "hashed-token-only-in-body", ...overrides,
+});
+test("origins Vercel configurados controlam CORS e redirect do callback", async () => {
+  const response=await handleSsoStart(request("https://edge.test/start","POST",portalOrigin,{target_app:"obras-control",return_path:"/alocacoes"},"Bearer valid"),startDeps());
+  assert.equal(response.status,200);assertCors(response,portalOrigin);
+  assert.equal(new URL((await response.json()).redirect_url).origin,obrasOrigin);
 });
 const request = (url: string, method: string, origin: string, body?: unknown, authorization?: string) =>
   new Request(url, { method, headers: { origin, ...(body === undefined ? {} : { "content-type": "application/json" }), ...(authorization ? { authorization } : {}) }, body: body === undefined ? undefined : JSON.stringify(body) });

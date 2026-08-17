@@ -1,13 +1,4 @@
-export const START_ORIGINS = new Set([
-  "https://portal-tks-br.vercel.app",
-  "http://localhost:5173",
-  "http://localhost:3000",
-]);
-export const EXCHANGE_ORIGINS = new Set([
-  "https://obras-control-demo.vercel.app",
-  "http://localhost:5173",
-  "http://localhost:3000",
-]);
+const LOCAL_ORIGINS = ["http://localhost:5173", "http://localhost:3000"];
 export const RETURN_PATHS = new Set([
   "/alocacoes",
   "/funcionarios",
@@ -39,10 +30,12 @@ export type StartDependencies = {
     expiresAt: string;
   }) => Promise<void>;
   obrasOrigin: string;
+  portalOrigin: string;
   log?: Logger;
 };
 
 export type ExchangeDependencies = {
+  obrasOrigin: string;
   consumeHandoff: (codeHash: string) => Promise<Handoff | null>;
   getUserEmail: (userId: string) => Promise<string | null>;
   generateTokenHash: (email: string) => Promise<string>;
@@ -107,26 +100,27 @@ async function readJson(req: Request) {
 
 export async function handleSsoStart(req: Request, deps: StartDependencies) {
   const origin = req.headers.get("origin");
-  if (req.method === "OPTIONS") return preflight(origin, START_ORIGINS, "https://portal-tks-br.vercel.app");
-  if (req.method !== "POST" || (origin && !START_ORIGINS.has(origin))) {
-    return json(origin, START_ORIGINS, "https://portal-tks-br.vercel.app", { error: "REQUEST_NOT_ALLOWED" }, 403);
+  const allowedOrigins = new Set([deps.portalOrigin, ...LOCAL_ORIGINS]);
+  if (req.method === "OPTIONS") return preflight(origin, allowedOrigins, deps.portalOrigin);
+  if (req.method !== "POST" || (origin && !allowedOrigins.has(origin))) {
+    return json(origin, allowedOrigins, deps.portalOrigin, { error: "REQUEST_NOT_ALLOWED" }, 403);
   }
   const authorization = req.headers.get("authorization");
   if (!authorization?.startsWith("Bearer ")) {
-    return json(origin, START_ORIGINS, "https://portal-tks-br.vercel.app", { error: "AUTH_REQUIRED" }, 401);
+    return json(origin, allowedOrigins, deps.portalOrigin, { error: "AUTH_REQUIRED" }, 401);
   }
   try {
     const userId = await deps.authenticate(authorization);
-    if (!userId) return json(origin, START_ORIGINS, "https://portal-tks-br.vercel.app", { error: "AUTH_INVALID" }, 401);
+    if (!userId) return json(origin, allowedOrigins, deps.portalOrigin, { error: "AUTH_INVALID" }, 401);
     const body = await readJson(req);
     if (body?.target_app !== "obras-control") {
-      return json(origin, START_ORIGINS, "https://portal-tks-br.vercel.app", { error: "TARGET_INVALID" }, 400);
+      return json(origin, allowedOrigins, deps.portalOrigin, { error: "TARGET_INVALID" }, 400);
     }
     if (typeof body.return_path !== "string" || !RETURN_PATHS.has(body.return_path)) {
-      return json(origin, START_ORIGINS, "https://portal-tks-br.vercel.app", { error: "RETURN_PATH_INVALID" }, 400);
+      return json(origin, allowedOrigins, deps.portalOrigin, { error: "RETURN_PATH_INVALID" }, 400);
     }
     if (!await deps.canAccessObras(userId)) {
-      return json(origin, START_ORIGINS, "https://portal-tks-br.vercel.app", { error: "OBRAS_ACCESS_DENIED" }, 403);
+      return json(origin, allowedOrigins, deps.portalOrigin, { error: "OBRAS_ACCESS_DENIED" }, 403);
     }
     const code = base64url(crypto.getRandomValues(new Uint8Array(32)));
     await deps.persistHandoff({
@@ -137,39 +131,40 @@ export async function handleSsoStart(req: Request, deps: StartDependencies) {
     });
     const redirect = new URL("/sso/callback", deps.obrasOrigin);
     redirect.searchParams.set("code", code);
-    return json(origin, START_ORIGINS, "https://portal-tks-br.vercel.app", { redirect_url: redirect.toString() });
+    return json(origin, allowedOrigins, deps.portalOrigin, { redirect_url: redirect.toString() });
   } catch (error) {
     deps.log?.(safeLog("sso_start", error));
-    return json(origin, START_ORIGINS, "https://portal-tks-br.vercel.app", { error: "SSO_START_FAILED" }, 500);
+    return json(origin, allowedOrigins, deps.portalOrigin, { error: "SSO_START_FAILED" }, 500);
   }
 }
 
 export async function handleSsoExchange(req: Request, deps: ExchangeDependencies) {
   const origin = req.headers.get("origin");
-  if (req.method === "OPTIONS") return preflight(origin, EXCHANGE_ORIGINS, "https://obras-control-demo.vercel.app");
-  if (req.method !== "POST" || (origin && !EXCHANGE_ORIGINS.has(origin))) {
-    return json(origin, EXCHANGE_ORIGINS, "https://obras-control-demo.vercel.app", { error: "REQUEST_NOT_ALLOWED" }, 403);
+  const allowedOrigins = new Set([deps.obrasOrigin, ...LOCAL_ORIGINS]);
+  if (req.method === "OPTIONS") return preflight(origin, allowedOrigins, deps.obrasOrigin);
+  if (req.method !== "POST" || (origin && !allowedOrigins.has(origin))) {
+    return json(origin, allowedOrigins, deps.obrasOrigin, { error: "REQUEST_NOT_ALLOWED" }, 403);
   }
   const body = await readJson(req);
   if (typeof body?.code !== "string" || !/^[A-Za-z0-9_-]{43}$/u.test(body.code)) {
-    return json(origin, EXCHANGE_ORIGINS, "https://obras-control-demo.vercel.app", { error: "SSO_CODE_INVALID" }, 400);
+    return json(origin, allowedOrigins, deps.obrasOrigin, { error: "SSO_CODE_INVALID" }, 400);
   }
   try {
     const handoff = await deps.consumeHandoff(await sha256(body.code));
     if (!handoff) {
-      return json(origin, EXCHANGE_ORIGINS, "https://obras-control-demo.vercel.app", { error: "SSO_CODE_INVALID" }, 400);
+      return json(origin, allowedOrigins, deps.obrasOrigin, { error: "SSO_CODE_INVALID" }, 400);
     }
     const email = await deps.getUserEmail(handoff.user_id);
     if (!email) {
-      return json(origin, EXCHANGE_ORIGINS, "https://obras-control-demo.vercel.app", { error: "SSO_CODE_INVALID" }, 400);
+      return json(origin, allowedOrigins, deps.obrasOrigin, { error: "SSO_CODE_INVALID" }, 400);
     }
     const tokenHash = await deps.generateTokenHash(email);
-    return json(origin, EXCHANGE_ORIGINS, "https://obras-control-demo.vercel.app", {
+    return json(origin, allowedOrigins, deps.obrasOrigin, {
       token_hash: tokenHash,
       return_path: handoff.return_path,
     });
   } catch (error) {
     deps.log?.(safeLog("sso_exchange", error));
-    return json(origin, EXCHANGE_ORIGINS, "https://obras-control-demo.vercel.app", { error: "SSO_EXCHANGE_FAILED" }, 500);
+    return json(origin, allowedOrigins, deps.obrasOrigin, { error: "SSO_EXCHANGE_FAILED" }, 500);
   }
 }
