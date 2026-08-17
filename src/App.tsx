@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Navigate, Route, Routes, useLocation } from "react-router-dom";
 import type { Session } from "@supabase/supabase-js";
 import { configured, supabase } from "./supabase";
@@ -16,6 +16,7 @@ import { Portal } from "./Portal";
 import { Relatorios } from "./Relatorios";
 import { podeAcessarAreasGerais, podeAcessarImportacaoEnderecos } from "./addressAccess";
 import { PasswordRecovery } from "./PasswordRecovery";
+import { Logout } from "./Logout";
 
 export type Access = {
   isRO: boolean;
@@ -49,6 +50,13 @@ export function App() {
   const [accessLoading, setAccessLoading] = useState(false);
   const [side, setSide] = useState(false);
   const [access, setAccess] = useState<Access>(EMPTY_ACCESS);
+  const clearLocalAuthState = useCallback(() => {
+    setSession(null);
+    setRecoveryOnly(false);
+    setAccess(EMPTY_ACCESS);
+    setAccessLoading(false);
+    setSide(false);
+  }, []);
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => {
       setSession(data.session);
@@ -99,6 +107,7 @@ export function App() {
       })
       .finally(() => setAccessLoading(false));
   }, [session]);
+  if (location.pathname === "/logout") return <Logout clearLocalAuthState={clearLocalAuthState} />;
   if (recoveryOnly && location.pathname !== "/redefinir-senha") return <Navigate to="/redefinir-senha" replace />;
   if (location.pathname === "/redefinir-senha") return <PasswordRecovery />;
   if (loading || accessLoading)
@@ -114,7 +123,7 @@ export function App() {
     <Routes>
       <Route
         path="/"
-        element={<Portal onLogout={() => supabase.auth.signOut()} />}
+        element={<Portal onLogout={() => supabase.auth.signOut({ scope: "local" })} />}
       />
       <Route
         path="/*"
@@ -123,7 +132,7 @@ export function App() {
             <Sidebar
               open={side}
               onClose={() => setSide(false)}
-              onLogout={() => supabase.auth.signOut()}
+              onLogout={() => supabase.auth.signOut({ scope: "local" })}
               canViewAll={access.canViewAll}
               canConfigure={access.canImport}
               canImportAddresses={canAccessAddressImport}
