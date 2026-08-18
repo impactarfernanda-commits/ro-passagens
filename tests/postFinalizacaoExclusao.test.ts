@@ -4,6 +4,7 @@ import test from "node:test";
 
 const phase1=fs.readFileSync("supabase/migrations/202608180001_fluxo_ro_pos_finalizacao_exclusao.sql","utf8");
 const phase2=fs.readFileSync("supabase/migrations/202608180002_remove_assinatura_complementar_legada.sql","utf8");
+const operationalFinalization=fs.readFileSync("supabase/migrations/202608180003_finalizacao_operacional_ro.sql","utf8");
 const page=fs.readFileSync("src/pages.tsx","utf8");
 const reports=fs.readFileSync("src/Relatorios.tsx","utf8");
 const roPermissions=fs.readFileSync("supabase/migrations/202607210002_ro_permissions_only_responsaveis.sql","utf8");
@@ -55,12 +56,18 @@ test("finalização manual e exclusão exigem RO ativo no backend",()=>{
   assert.match(roPermissions,/from public\.ro_responsaveis[\s\S]*where user_id = p_user[\s\S]*and ativo/);
 });
 
-test("finalização manual exige chegada, mas aceita chegada com ou sem imprevisto",()=>{
-  assert.match(phase1,/if p_chegou_ao_destino is not true then raise exception 'FUNCIONARIO_AINDA_NAO_CHEGOU_AO_DESTINO'/);
-  assert.match(phase1,/if p_houve_imprevisto and nullif\(btrim\(p_observacao_finalizacao\),''\) is null/);
-  assert.doesNotMatch(phase1,/p_houve_imprevisto or not p_chegou_ao_destino/);
-  assert.match(page,/disabled=\{busy\|\|!chegou\}/);
-  assert.match(page,/Confirme que o funcionário chegou ao destino antes de finalizar/);
+test("finalização manual encerra somente as atividades do RO",()=>{
+  assert.match(operationalFinalization,/ro_finalizar_solicitacao\(\s*p_solicitacao_id uuid,\s*p_observacao_operacional text\s*\)/);
+  assert.match(operationalFinalization,/ro_finalizar_solicitacao\(\s*p_solicitacao_id uuid,\s*p_chegou_ao_destino boolean,\s*p_data_chegada_confirmada date,\s*p_houve_imprevisto boolean,\s*p_observacao_finalizacao text\s*\)/);
+  assert.match(operationalFinalization,/APENAS_RESPONSAVEL_RO_ATIVO_PODE_FINALIZAR/);
+  assert.match(operationalFinalization,/perform public\.ro_finalizar_solicitacao\(\s*p_solicitacao_id,\s*p_observacao_finalizacao\s*\)/);
+  assert.doesNotMatch(operationalFinalization,/set[\s\S]*?(chegou_ao_destino|data_chegada_confirmada|houve_imprevisto)\s*=/i);
+  assert.doesNotMatch(operationalFinalization,/(if|where|select)[^;]*(p_chegou_ao_destino|p_data_chegada_confirmada|p_houve_imprevisto)/i);
+  assert.match(operationalFinalization,/revoke all on function public\.ro_finalizar_solicitacao\(uuid,boolean,date,boolean,text\) from public,anon/i);
+  assert.match(operationalFinalization,/grant execute on function public\.ro_finalizar_solicitacao\(uuid,boolean,date,boolean,text\) to authenticated/i);
+  assert.match(page,/Isso não confirma a chegada do funcionário/);
+  assert.match(page,/p_observacao_operacional: observacao/);
+  assert.doesNotMatch(page,/p_chegou_ao_destino|p_data_chegada_confirmada|p_houve_imprevisto|p_observacao_finalizacao|Confirme que o funcionário chegou ao destino/);
 });
 
 test("relatório e autofinalização ignoram exclusões em definições explícitas",()=>{
