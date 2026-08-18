@@ -1811,9 +1811,6 @@ function Assumir({ row, onDone }: { row: Solicitacao; onDone: () => void }) {
 function Operacoes({ row, onDone }: { row: Solicitacao; onDone: () => void }) {
   const [busy, setBusy] = useState(false);
   const [erro, setErro] = useState("");
-  const [chegou, setChegou] = useState(true);
-  const [houveImprevisto, setHouveImprevisto] = useState(false);
-  const [dataChegada, setDataChegada] = useState(new Date().toISOString().slice(0,10));
   const [observacao, setObservacao] = useState("");
   async function andamento() {
     setBusy(true);
@@ -1840,26 +1837,19 @@ function Operacoes({ row, onDone }: { row: Solicitacao; onDone: () => void }) {
     event.preventDefault();
     setBusy(true); setErro("");
     const { error } = await supabase.rpc("ro_finalizar_solicitacao", {
-      p_solicitacao_id: row.id, p_chegou_ao_destino: chegou,
-      p_data_chegada_confirmada: dataChegada, p_houve_imprevisto: houveImprevisto,
-      p_observacao_finalizacao: observacao,
+      p_solicitacao_id: row.id,
+      p_observacao_operacional: observacao,
     });
-    setErro(error?.message.includes("FUNCIONARIO_AINDA_NAO_CHEGOU_AO_DESTINO")
-      ? "Confirme que o funcionário chegou ao destino antes de finalizar."
-      : error?.message || "");
+    setErro(error?.message || "");
     setBusy(false); if (!error) onDone();
   }
   if (["finalizada", "cancelada", "recusada"].includes(row.status)) return null;
   if (row.status === "passagem_comprada") return <form className="card form operations" onSubmit={finalizar}>
     <h2 className="wide">Finalizar solicitação</h2>
-    <p className="wide">Confirme a chegada. Valores e passagens complementares continuarão editáveis depois da finalização.</p>
+    <p className="wide">Encerre as atividades do RO para esta solicitação. Isso não confirma a chegada do funcionário. Valores e passagens complementares continuarão editáveis.</p>
     {erro && <div className="error wide">{erro}</div>}
-    <label>Data da chegada *<input type="date" required value={dataChegada} onChange={(e)=>setDataChegada(e.target.value)}/></label>
-    <label className="check"><input type="checkbox" checked={chegou} onChange={(e)=>setChegou(e.target.checked)}/>Chegou ao destino</label>
-    <label className="check"><input type="checkbox" checked={houveImprevisto} onChange={(e)=>setHouveImprevisto(e.target.checked)}/>Houve imprevisto</label>
-    <label className="wide">Observação {(houveImprevisto||!chegou)&&"*"}<textarea rows={3} required={houveImprevisto||!chegou} value={observacao} onChange={(e)=>setObservacao(e.target.value)}/></label>
-    {!chegou && <div className="alert wide">A solicitação só pode ser finalizada depois que o funcionário chegar ao destino.</div>}
-    <div className="actions wide"><button className="btn primary" disabled={busy||!chegou}>{busy?"Finalizando...":"Finalizar solicitação"}</button><button type="button" className="btn danger" disabled={busy} onClick={cancelar}>Cancelar solicitação</button></div>
+    <label className="wide">Observação operacional<textarea rows={3} maxLength={1000} value={observacao} onChange={(e)=>setObservacao(e.target.value)}/></label>
+    <div className="actions wide"><button className="btn primary" disabled={busy}>{busy?"Finalizando...":"Finalizar atividades do RO"}</button><button type="button" className="btn danger" disabled={busy} onClick={cancelar}>Cancelar solicitação</button></div>
   </form>;
   return (
     <section className="card operations">
