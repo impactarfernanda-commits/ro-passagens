@@ -1,8 +1,9 @@
 import type { Custo } from "./types";
 
-export type EditableOperationalCostType = Exclude<Custo["tipo"], "passagem">;
+export type EditableOperationalCostType = Custo["tipo"];
 
 export const EDITABLE_OPERATIONAL_COST_TYPES: readonly EditableOperationalCostType[] = [
+  "passagem",
   "hospedagem",
   "uber",
   "refeicao",
