@@ -101,8 +101,9 @@ export function Relatorios() {
     let custosQuery = supabase
       .from("ro_passagem_custos")
       .select(
-        "solicitacao_id,centro_custo_id,tipo,descricao,valor,created_at,solicitacao:ro_passagem_solicitacoes!inner(id,obra_id,status,motivo,responsavel_ro_id,houve_imprevisto,created_at,comprado_em,funcionario:funcionarios(id,nome),anexos:ro_passagem_anexos(complementar,imprevisto))",
+        "solicitacao_id,centro_custo_id,tipo,descricao,valor,created_at,solicitacao:ro_passagem_solicitacoes!inner(id,obra_id,status,motivo,responsavel_ro_id,houve_imprevisto,excluida_em,created_at,comprado_em,funcionario:funcionarios(id,nome),anexos:ro_passagem_anexos(complementar,imprevisto))",
       )
+      .is("solicitacao.excluida_em", null)
       .gt("valor", 0);
     if (inicio) custosQuery = custosQuery.gte("created_at", inicio);
     if (fimExclusivo) custosQuery = custosQuery.lt("created_at", fimExclusivo);
@@ -111,6 +112,7 @@ export function Relatorios() {
       .select(
         "id,obra_id,status,motivo,responsavel_ro_id,houve_imprevisto,created_at,comprado_em,funcionario:funcionarios(id,nome),anexos:ro_passagem_anexos(complementar,imprevisto)",
       )
+      .is("excluida_em", null)
       .in("status", ["solicitada", "em_analise", "em_andamento"]);
     if (inicio) abertasQuery = abertasQuery.gte("created_at", inicio);
     if (fimExclusivo)

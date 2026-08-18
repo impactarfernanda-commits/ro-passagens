@@ -133,6 +133,9 @@ export type Solicitacao = {
   observacao_finalizacao: string | null;
   finalizado_por: string | null;
   finalizado_em: string | null;
+  excluida_em?: string | null;
+  excluida_por?: string | null;
+  motivo_exclusao?: string | null;
   created_at: string;
   updated_at: string;
   destino_residencial_origem?: "rh" | "excepcional" | null;

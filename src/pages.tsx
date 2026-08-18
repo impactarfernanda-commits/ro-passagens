@@ -312,12 +312,14 @@ export function Dashboard({ access }: { access: Access }) {
       supabase
         .from("ro_passagem_solicitacoes")
         .select(join)
+        .is("excluida_em", null)
         .order("created_at", { ascending: false }),
       supabase
         .from("ro_passagem_custos")
         .select(
-          "id,solicitacao_id,tipo,descricao,valor,created_at,solicitacao:ro_passagem_solicitacoes!inner(id,status,motivo,houve_imprevisto,funcionario_id,colaborador_id,funcionario:funcionarios(id,nome),colaborador:ro_funcionarios_enderecos_privados!ro_passagem_solicitacoes_colaborador_id_fkey(id,nome),anexos:ro_passagem_anexos(complementar,imprevisto))",
+          "id,solicitacao_id,tipo,descricao,valor,created_at,solicitacao:ro_passagem_solicitacoes!inner(id,status,motivo,houve_imprevisto,excluida_em,funcionario_id,colaborador_id,funcionario:funcionarios(id,nome),colaborador:ro_funcionarios_enderecos_privados!ro_passagem_solicitacoes_colaborador_id_fkey(id,nome),anexos:ro_passagem_anexos(complementar,imprevisto))",
         )
+        .is("solicitacao.excluida_em", null)
         .gte("created_at", inicioMes)
         .lt("created_at", inicioMesSeguinte)
         .gt("valor", 0),
@@ -717,6 +719,7 @@ export function Solicitacoes({
   const motivoInicial =
     motivoParam && motivoParam in motivoLabel ? motivoParam : "";
   const imprevistoAtivo = searchParams.get("imprevisto") === "true";
+  const mostrandoExcluidas = access.canOperateRO && searchParams.get("excluidas") === "true";
   const [rows, setRows] = useState<Solicitacao[]>([]);
   const [userLabels, setUserLabels] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
@@ -737,6 +740,7 @@ export function Solicitacoes({
     let q = supabase
       .from("ro_passagem_solicitacoes")
       .select(join)
+      .filter("excluida_em", mostrandoExcluidas ? "not.is" : "is", null)
       .order("created_at", { ascending: false });
     if (!access.canViewAll && !access.isRh) q = q.eq("solicitante_id", userId);
     const { data } = await q;
@@ -761,7 +765,7 @@ export function Solicitacoes({
     );
     setRows(loaded);
     setLoading(false);
-  }, [access.canViewAll, access.isRh, userId]);
+  }, [access.canViewAll, access.isRh, mostrandoExcluidas, userId]);
   useAutoFinalization(access.canViewAll, load);
   useEffect(() => {
     load();
@@ -816,13 +820,13 @@ export function Solicitacoes({
   );
   return (
     <Page
-      title="Solicitações"
-      subtitle="Acompanhe passagens, status e custos"
+      title={mostrandoExcluidas ? "Solicitações excluídas" : "Solicitações"}
+      subtitle={mostrandoExcluidas ? "Arquivo de exclusões realizadas pela equipe RO" : "Acompanhe passagens, status e custos"}
       action={
-        <Link to="/nova" className="btn primary">
-          <Plus size={17} />
-          Nova solicitação
-        </Link>
+        <div className="actions">
+          {access.canOperateRO && <Link to={mostrandoExcluidas ? "/solicitacoes" : "/solicitacoes?excluidas=true"} className="btn secondary"><Trash2 size={17} />{mostrandoExcluidas ? "Voltar às solicitações" : "Ver excluídas"}</Link>}
+          {!mostrandoExcluidas && <Link to="/nova" className="btn primary"><Plus size={17} />Nova solicitação</Link>}
+        </div>
       }
     >
       <div className="card filters">
@@ -904,6 +908,7 @@ export function Solicitacoes({
                 <th>Motivo</th>
                 <th>Data ida</th>
                 <th>Status</th>
+                {mostrandoExcluidas && <th>Exclusão</th>}
                 <th></th>
               </tr>
             </thead>
@@ -949,6 +954,7 @@ export function Solicitacoes({
                     <td>
                       <StatusBadge status={statusLabel[r.status]} />
                     </td>
+                    {mostrandoExcluidas && <td><strong>{dataHora(r.excluida_em)}</strong><small>{r.motivo_exclusao || "Motivo não informado"}</small></td>}
                     <td>
                       <Link className="icon" to={`/solicitacoes/${r.id}`}>
                         <Eye size={18} />
@@ -1549,6 +1555,7 @@ export function Detalhe({ access, userId }: { access: Access; userId: string }) 
           const ids = [
             found.solicitante_id,
             responsavelId,
+            found.excluida_por,
             found.recusada_por,
             found.folga_antecipacao_analisada_por,
             ...anexos.map(criadorAnexoId),
@@ -1577,6 +1584,7 @@ export function Detalhe({ access, userId }: { access: Access; userId: string }) 
               ? labelMap.get(found.recusada_por) || "Integrante RO sem identificação"
               : null,
             folga_antecipacao_analisada_por_nome: found.folga_antecipacao_analisada_por?labelMap.get(found.folga_antecipacao_analisada_por)||"Integrante RO sem identificação":null,
+            excluida_por_nome: found.excluida_por ? labelMap.get(found.excluida_por) || "Integrante RO sem identificação" : null,
             anexos: anexos.map((a) => ({
               ...a,
               criado_por_nome:
@@ -1627,6 +1635,7 @@ export function Detalhe({ access, userId }: { access: Access; userId: string }) 
           </span>
         )}
       </div>
+      {row.excluida_em && <section className="card rejection-summary"><h2>Solicitação excluída</h2><DT t="Excluída por" v={(row as Solicitacao & {excluida_por_nome?:string|null}).excluida_por_nome}/><DT t="Data da exclusão" v={dataHora(row.excluida_em)}/><DT t="Motivo" v={row.motivo_exclusao}/></section>}
       {row.status === "recusada" && <section className="card rejection-summary"><h2>Solicitação recusada</h2><DT t="Motivo" v={row.motivo_recusa} /><DT t="Recusada por" v={(row as Solicitacao & {recusada_por_nome?:string|null}).recusada_por_nome} /><DT t="Data" v={dataHora(row.recusada_em)} /></section>}
       {row.motivo==="folga_campo"&&row.folga_antecipada&&<section className="card cycle-detail"><h2>Antecipação de folga de campo</h2><DT t="Data prevista do ciclo" v={data(row.folga_data_prevista_ciclo)}/><DT t="Data antecipada solicitada" v={data(row.data_ida)}/><DT t="Dias antecipados" v={row.folga_data_prevista_ciclo?String(Math.round((new Date(`${row.folga_data_prevista_ciclo}T12:00:00`).getTime()-new Date(`${row.data_ida}T12:00:00`).getTime())/86400000)):null}/><DT t="Justificativa" v={row.folga_antecipacao_justificativa}/><DT t="Status da análise" v={row.folga_antecipacao_status}/>{row.folga_antecipacao_status==="aprovada"&&<><DT t="Analisada por" v={(row as Solicitacao&{folga_antecipacao_analisada_por_nome?:string|null}).folga_antecipacao_analisada_por_nome}/><DT t="Analisada em" v={dataHora(row.folga_antecipacao_analisada_em)}/></>}{access.canOperateRO&&row.folga_antecipacao_status==="pendente"&&<AprovarAntecipacao row={row} onDone={load}/>}</section>}
       <section className="card detail request-data">
@@ -1679,30 +1688,31 @@ export function Detalhe({ access, userId }: { access: Access; userId: string }) 
       </section>
       {(access.isRh||access.isRO||access.canImport)&&enderecoResidencial&&<section className="card detail"><h2>Dados do passageiro</h2><dl><DT t="Nome" v={enderecoResidencial.nome||resolveSolicitacaoColaborador(row)?.nome}/><DT t="Data de nascimento" v={data(enderecoResidencial.data_nascimento)}/><DT t="CPF" v={formatCpf(enderecoResidencial.cpf)}/><DT t="RG" v={enderecoResidencial.rg}/><DT t="Telefone" v={formatPhone(enderecoResidencial.telefone)}/><DT t="Logradouro" v={enderecoResidencial.logradouro}/><DT t="Bairro" v={enderecoResidencial.bairro}/><DT t="Cidade / UF" v={`${enderecoResidencial.cidade||"—"} / ${enderecoResidencial.uf||"—"}`}/><DT t="Atualizado em" v={dataHora(enderecoResidencial.atualizado_em)}/>{row.destino_residencial_origem==="excepcional"&&<DT t="Destino alterado manualmente" v={row.destino_residencial_justificativa}/>}</dl></section>}
       {(access.isRh||access.isRO||access.isAdmin)&&documentosInternos.length>0&&<section className="card"><h2>Documentos internos restritos</h2>{documentosInternos.map((d)=><div className="actions" key={d.id}><span>{d.categoria==="termo_justa_causa"?"Termo de justa causa":"Carta de pedido de demissão"}</span>{d.url&&<a className="btn secondary" href={d.url} target="_blank" rel="noreferrer">Abrir PDF</a>}</div>)}</section>}
-      {access.canOperateRO && <RecusarSolicitacao row={row} onDone={load} />}
+      {access.canOperateRO && !row.excluida_em && <RecusarSolicitacao row={row} onDone={load} />}
       {row.status === "recusada" && row.solicitante_id === userId && <div className="actions rejection-recreate"><Link className="btn primary" to="/nova" state={{refazer:row.id}}>Criar nova a partir desta</Link></div>}
-      {access.canOperateRO && row.status === "solicitada" && (
+      {access.canOperateRO && !row.excluida_em && row.status === "solicitada" && (
         <Assumir row={row} onDone={load} />
       )}
-      {access.canOperateRO && !["solicitada","recusada"].includes(row.status) && (
+      {access.canOperateRO && !row.excluida_em && !["solicitada","recusada"].includes(row.status) && (
         <Operacoes row={row} onDone={load} />
       )}
-      {access.canOperateRO &&
+      {access.canOperateRO && !row.excluida_em &&
         ["em_analise", "em_andamento"].includes(row.status) && compraFolgaLiberada(row.folga_antecipacao_status) && (
           <Compra row={row} onDone={load} />
         )}
-      {access.canOperateRO && row.status === "passagem_comprada" && (
+      {access.canOperateRO && !row.excluida_em && ["passagem_comprada", "finalizada"].includes(row.status) && (
         <Compra row={row} onDone={load} complementar />
       )}
-      {access.canOperateRO && row.necessita_hospedagem && !["cancelada","recusada"].includes(row.status) && <HospedagemOperacional row={row} onDone={load} />}
+      {access.canOperateRO && !row.excluida_em && row.necessita_hospedagem && !["cancelada","recusada"].includes(row.status) && <HospedagemOperacional row={row} onDone={load} />}
       <PassagemComprada
         anexos={row.anexos || []}
         custos={row.custos || []}
         canViewCosts={canViewFinancialCosts(access)}
-        canEditCosts={access.canOperateRO && !["cancelada", "recusada"].includes(row.status)}
+        canEditCosts={access.canOperateRO && !row.excluida_em && !["cancelada", "recusada"].includes(row.status)}
         solicitacaoId={row.id}
         onCostUpdated={load}
       />
+      {access.canOperateRO && !row.excluida_em && <ExcluirSolicitacao row={row} />}
       <div className="grid two detail">
         <section className="card">
           <h2>Notificações</h2>
@@ -1801,6 +1811,10 @@ function Assumir({ row, onDone }: { row: Solicitacao; onDone: () => void }) {
 function Operacoes({ row, onDone }: { row: Solicitacao; onDone: () => void }) {
   const [busy, setBusy] = useState(false);
   const [erro, setErro] = useState("");
+  const [chegou, setChegou] = useState(true);
+  const [houveImprevisto, setHouveImprevisto] = useState(false);
+  const [dataChegada, setDataChegada] = useState(new Date().toISOString().slice(0,10));
+  const [observacao, setObservacao] = useState("");
   async function andamento() {
     setBusy(true);
     const { error } = await supabase.rpc("ro_alterar_status", {
@@ -1822,7 +1836,31 @@ function Operacoes({ row, onDone }: { row: Solicitacao; onDone: () => void }) {
     setBusy(false);
     if (!error) onDone();
   }
+  async function finalizar(event: React.FormEvent) {
+    event.preventDefault();
+    setBusy(true); setErro("");
+    const { error } = await supabase.rpc("ro_finalizar_solicitacao", {
+      p_solicitacao_id: row.id, p_chegou_ao_destino: chegou,
+      p_data_chegada_confirmada: dataChegada, p_houve_imprevisto: houveImprevisto,
+      p_observacao_finalizacao: observacao,
+    });
+    setErro(error?.message.includes("FUNCIONARIO_AINDA_NAO_CHEGOU_AO_DESTINO")
+      ? "Confirme que o funcionário chegou ao destino antes de finalizar."
+      : error?.message || "");
+    setBusy(false); if (!error) onDone();
+  }
   if (["finalizada", "cancelada", "recusada"].includes(row.status)) return null;
+  if (row.status === "passagem_comprada") return <form className="card form operations" onSubmit={finalizar}>
+    <h2 className="wide">Finalizar solicitação</h2>
+    <p className="wide">Confirme a chegada. Valores e passagens complementares continuarão editáveis depois da finalização.</p>
+    {erro && <div className="error wide">{erro}</div>}
+    <label>Data da chegada *<input type="date" required value={dataChegada} onChange={(e)=>setDataChegada(e.target.value)}/></label>
+    <label className="check"><input type="checkbox" checked={chegou} onChange={(e)=>setChegou(e.target.checked)}/>Chegou ao destino</label>
+    <label className="check"><input type="checkbox" checked={houveImprevisto} onChange={(e)=>setHouveImprevisto(e.target.checked)}/>Houve imprevisto</label>
+    <label className="wide">Observação {(houveImprevisto||!chegou)&&"*"}<textarea rows={3} required={houveImprevisto||!chegou} value={observacao} onChange={(e)=>setObservacao(e.target.value)}/></label>
+    {!chegou && <div className="alert wide">A solicitação só pode ser finalizada depois que o funcionário chegar ao destino.</div>}
+    <div className="actions wide"><button className="btn primary" disabled={busy||!chegou}>{busy?"Finalizando...":"Finalizar solicitação"}</button><button type="button" className="btn danger" disabled={busy} onClick={cancelar}>Cancelar solicitação</button></div>
+  </form>;
   return (
     <section className="card operations">
       <h2>Ações operacionais</h2>
@@ -1839,6 +1877,19 @@ function Operacoes({ row, onDone }: { row: Solicitacao; onDone: () => void }) {
       </div>
     </section>
   );
+}
+
+function ExcluirSolicitacao({row}:{row:Solicitacao}) {
+  const nav=useNavigate(); const[busy,setBusy]=useState(false); const[erro,setErro]=useState("");
+  async function excluir(){
+    const motivo=window.prompt("Informe o motivo da exclusão (erro, teste ou outro):")?.trim();
+    if(!motivo)return;
+    if(!window.confirm("Excluir esta solicitação do fluxo? Ela ficará disponível em Solicitações excluídas."))return;
+    setBusy(true);setErro("");
+    const {error}=await supabase.rpc("ro_excluir_solicitacao",{p_solicitacao_id:row.id,p_motivo:motivo});
+    setBusy(false);if(error){setErro(error.message);return;}nav("/solicitacoes?excluidas=true");
+  }
+  return <section className="card operations"><h2>Exclusão da solicitação</h2><p>Use apenas para registros criados por engano ou para teste. Os dados e a autoria serão preservados no arquivo de excluídas.</p>{erro&&<div className="error">{erro}</div>}<button className="btn danger" disabled={busy} onClick={()=>void excluir()}><Trash2 size={17}/>{busy?"Excluindo...":"Excluir solicitação"}</button></section>;
 }
 function DT({ t, v }: { t: string; v?: string | null }) {
   return (
@@ -2399,7 +2450,7 @@ function Compra({
             .filter(Boolean)
             .join(" "),
         };
-        if (complementar) anexosComplementares.push(metadata);
+        if (complementar) anexosComplementares.push({...metadata, centro_custo_id: form.centro_custo_id});
         else {
           const attachment = await supabase
             .from("ro_passagem_anexos")
@@ -2440,6 +2491,7 @@ function Compra({
             p_anexos: anexosComplementares,
             p_imprevisto: form.imprevisto,
             p_motivo_complementar: form.motivo_complementar,
+            p_custos_adicionais: custos.filter((custo)=>custo.tipo!=="passagem"),
           })
         : await supabase.rpc("ro_registrar_compra", {
             p_solicitacao_id: row.id,
