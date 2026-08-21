@@ -54,7 +54,8 @@ import { CostCenterCombobox } from "./CostCenterCombobox";
 import { emptyNovaSolicitacaoForm, hasDraftContent, novaSolicitacaoDraftKey, parseDraft, serializeDraft, validateDraftCatalogIds, type NovaSolicitacaoDraftData } from "./novaSolicitacaoDraft";
 import { COMPRA_HORARIO_ALERTA, horarioLocalDaPartida, partidaAnteriorAoSolicitado } from "./passagemOperationalRules";
 import { HOSPEDAGEM_ATTACHMENT_TYPE, isHospedagemAttachment, parseHospedagemValor } from "./hospedagemOperationalRules";
-import { isEditableOperationalCost, parseOperationalCostValue } from "./operationalCostRules";
+import { resolveUserLabel } from "./userLabelResolution";
+import { isEditableOperationalCost, isPassageCost, parseOperationalCostValue } from "./operationalCostRules";
 import { autoMapHeaders, buildCollaboratorSuggestions, canKeepAsExternal, duplicateCpfRows, formatCpf, formatPhone, isSpreadsheetRows, isValidCpf, matchCollaborator, MAX_RH_XLSX_BYTES, normalizeCpf, normalizePhone, parseBirthDate, possibleMatches, resolveCollaboratorSuggestion, strongAuxiliaryMatches, validUf, type AddressField, type CollaboratorSuggestion, type ColumnMapping, type SpreadsheetRows } from "./addressImport";
 import type {
   Anexo,
@@ -709,9 +710,11 @@ function Stat({
 export function Solicitacoes({
   access,
   userId,
+  approvalsOnly = false,
 }: {
   access: Access;
   userId: string;
+  approvalsOnly?: boolean;
 }) {
   const { funcionarios, obras } = useCatalogos();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -742,7 +745,8 @@ export function Solicitacoes({
       .select(join)
       .filter("excluida_em", mostrandoExcluidas ? "not.is" : "is", null)
       .order("created_at", { ascending: false });
-    if (!access.canViewAll && !access.isRh) q = q.eq("solicitante_id", userId);
+    if (approvalsOnly) q = q.eq("aprovador_id", userId).eq("aprovacao_status", "pendente");
+    if (!approvalsOnly && !access.canViewAll && !access.isRh) q = q.eq("solicitante_id", userId);
     const { data } = await q;
     const loaded = (data || []) as unknown as Solicitacao[];
     const ids = [
@@ -765,7 +769,7 @@ export function Solicitacoes({
     );
     setRows(loaded);
     setLoading(false);
-  }, [access.canViewAll, access.isRh, mostrandoExcluidas, userId]);
+  }, [access.canViewAll, access.isRh, approvalsOnly, mostrandoExcluidas, userId]);
   useAutoFinalization(access.canViewAll, load);
   useEffect(() => {
     load();
@@ -820,7 +824,7 @@ export function Solicitacoes({
   );
   return (
     <Page
-      title={mostrandoExcluidas ? "Solicitações excluídas" : "Solicitações"}
+      title={approvalsOnly ? "Minhas aprovações" : mostrandoExcluidas ? "Solicitações excluídas" : "Solicitações"}
       subtitle={mostrandoExcluidas ? "Arquivo de exclusões realizadas pela equipe RO" : "Acompanhe passagens, status e custos"}
       action={
         <div className="actions">
@@ -977,6 +981,7 @@ export function NovaSolicitacao({ userId, access }: { userId: string; access: Ac
   const [busy, setBusy] = useState(false);
   const [erro, setErro] = useState("");
   const [solicitante, setSolicitante] = useState("");
+  const [aprovadores, setAprovadores] = useState<Array<{id:string;label:string}>>([]);
   const [solicitarExcecao, setSolicitarExcecao] = useState(false);
   const [dataPrazoErro, setDataPrazoErro] = useState(false);
   const [diasNaoUteis, setDiasNaoUteis] = useState<Array<{data:string;ativo:boolean}>>([]);
@@ -1009,6 +1014,7 @@ export function NovaSolicitacao({ userId, access }: { userId: string; access: Ac
       supabase.from("ro_calendario_nao_util").select("data,ativo").eq("ativo", true),
       supabase.from("ro_calendario_anos").select("ano,completo"),
     ]).then(([dias, anos]) => { setDiasNaoUteis(dias.data || []); setAnosCalendario(anos.data || []); });
+    supabase.rpc("ro_listar_aprovadores").then(({data})=>setAprovadores((data||[]) as Array<{id:string;label:string}>));
   }, [userId]);
   useEffect(() => {
     if (!catalogosReady || draftReady) return;
@@ -1138,6 +1144,8 @@ export function NovaSolicitacao({ userId, access }: { userId: string; access: Ac
       setErro("Selecione o centro de custo atual.");
       return;
     }
+    const dispensaAprovacao = access.isRh || access.isRO || access.isAdmin;
+    if (!dispensaAprovacao && !form.aprovador_id) { setErro("Selecione o aprovador da solicitação."); return; }
     if (!form.pix_viajante.trim()) { setErro("Informe a chave PIX do próprio viajante."); return; }
     if (form.necessita_hospedagem && (!form.hospedagem_checkin || !form.hospedagem_checkout)) { setErro("Informe Check-in e Check-out da hospedagem."); return; }
     if (form.necessita_hospedagem && form.hospedagem_checkout < form.hospedagem_checkin) { setErro("O Check-out deve ser igual ou posterior ao Check-in."); return; }
@@ -1174,7 +1182,7 @@ export function NovaSolicitacao({ userId, access }: { userId: string; access: Ac
       documentos.push({categoria,storage_path:uploadedPath,arquivo_nome:documento.name,tamanho_bytes:documento.size});
     }
     const payload=normalizarCamposRetorno({...form,id,colaborador_id:funcionarioSelecionado?.funcionario_id===funcionarioSelecionado?.id?null:funcionarioSelecionado?.id,funcionario_id:funcionarioSelecionado?.funcionario_id||null,solicitar_excecao_prazo:gerencial&&permiteExcecaoPrazo&&solicitarExcecao,usar_destino_excepcional:motivoResidencial&&destinoDiferente,destino_residencial_justificativa:justificativaDestino});
-    const { data: created, error } = await supabase.rpc("ro_criar_solicitacao_colaborador_validada", { p_solicitacao:payload, p_documentos:documentos });
+    const { data: created, error } = await supabase.rpc("ro_criar_solicitacao_com_aprovador", { p_solicitacao:payload, p_documentos:documentos });
     if (error) {
       if(uploadedPath) await supabase.storage.from("ro-documentos-internos").remove([uploadedPath]);
       if (import.meta.env.DEV) console.error("Falha ao criar solicitação", { message:error.message, code:error.code, details:error.details, hint:error.hint });
@@ -1218,6 +1226,7 @@ export function NovaSolicitacao({ userId, access }: { userId: string; access: Ac
             ))}
           </select>
         </label>
+        {!(access.isRh || access.isRO || access.isAdmin) && <label>Aprovador *<select required value={form.aprovador_id} onChange={(e)=>setForm({...form,aprovador_id:e.target.value})}><option value="">Selecione</option>{aprovadores.map((a)=><option key={a.id} value={a.id}>{a.label}</option>)}</select><small>Somente este aprovador poderá analisar a solicitação.</small></label>}
         <label>
           Centro de custo atual *
           <CostCenterCombobox required options={obras} value={form.obra_id}
@@ -1536,6 +1545,7 @@ export function Detalhe({ access, userId }: { access: Access; userId: string }) 
   const [row, setRow] = useState<Solicitacao | null>(null);
   const [loading, setLoading] = useState(true);
   const [erro, setErro] = useState("");
+  const [erroIdentificacaoSolicitante,setErroIdentificacaoSolicitante]=useState(false);
   const [documentosInternos,setDocumentosInternos]=useState<Array<{id:string;categoria:string;arquivo_nome:string;storage_path:string;url?:string}>>([]);
   const [enderecoResidencial,setEnderecoResidencial]=useState<{nome?:string;data_nascimento?:string|null;cpf?:string|null;rg?:string|null;telefone?:string|null;cep?:string|null;logradouro:string|null;numero?:string|null;complemento?:string|null;bairro:string|null;cidade:string;uf:string;atualizado_em:string}|null>(null);
   const load = useCallback(() => {
@@ -1560,7 +1570,7 @@ export function Detalhe({ access, userId }: { access: Access; userId: string }) 
             found.folga_antecipacao_analisada_por,
             ...anexos.map(criadorAnexoId),
           ].filter(Boolean) as string[];
-          const { data: labels } = await supabase.rpc("ro_user_labels", {
+          const { data: labels, error: labelsError } = await supabase.rpc("ro_user_labels", {
             p_user_ids: ids,
           });
           const labelMap = new Map(
@@ -1569,13 +1579,15 @@ export function Detalhe({ access, userId }: { access: Access; userId: string }) 
               item.label,
             ]),
           );
+          const solicitanteResolvido=resolveUserLabel(found.solicitante_id,labels,Boolean(labelsError));
+          setErroIdentificacaoSolicitante(solicitanteResolvido.status==="error");
           setRow({
             ...found,
             solicitante: {
               id: found.solicitante_id,
-              full_name:
-                labelMap.get(found.solicitante_id) ||
-                "Solicitante sem identificação",
+              full_name: solicitanteResolvido.status==="resolved"
+                ? solicitanteResolvido.label
+                : "Identificação indisponível",
             },
             responsavel_ro_nome: responsavelId
               ? labelMap.get(responsavelId) || "Responsável sem identificação"
@@ -1637,9 +1649,12 @@ export function Detalhe({ access, userId }: { access: Access; userId: string }) 
       </div>
       {row.excluida_em && <section className="card rejection-summary"><h2>Solicitação excluída</h2><DT t="Excluída por" v={(row as Solicitacao & {excluida_por_nome?:string|null}).excluida_por_nome}/><DT t="Data da exclusão" v={dataHora(row.excluida_em)}/><DT t="Motivo" v={row.motivo_exclusao}/></section>}
       {row.status === "recusada" && <section className="card rejection-summary"><h2>Solicitação recusada</h2><DT t="Motivo" v={row.motivo_recusa} /><DT t="Recusada por" v={(row as Solicitacao & {recusada_por_nome?:string|null}).recusada_por_nome} /><DT t="Data" v={dataHora(row.recusada_em)} /></section>}
+      {row.aprovacao_status === "reprovada" && <section className="card rejection-summary"><h2>Reprovada pelo aprovador</h2><DT t="Motivo" v={row.motivo_reprovacao_aprovador}/><DT t="Data" v={dataHora(row.reprovado_em)}/></section>}
+      {row.aprovador_id === userId && row.aprovacao_status === "pendente" && <AprovacaoIndividual row={row} onDone={load}/>}
       {row.motivo==="folga_campo"&&row.folga_antecipada&&<section className="card cycle-detail"><h2>Antecipação de folga de campo</h2><DT t="Data prevista do ciclo" v={data(row.folga_data_prevista_ciclo)}/><DT t="Data antecipada solicitada" v={data(row.data_ida)}/><DT t="Dias antecipados" v={row.folga_data_prevista_ciclo?String(Math.round((new Date(`${row.folga_data_prevista_ciclo}T12:00:00`).getTime()-new Date(`${row.data_ida}T12:00:00`).getTime())/86400000)):null}/><DT t="Justificativa" v={row.folga_antecipacao_justificativa}/><DT t="Status da análise" v={row.folga_antecipacao_status}/>{row.folga_antecipacao_status==="aprovada"&&<><DT t="Analisada por" v={(row as Solicitacao&{folga_antecipacao_analisada_por_nome?:string|null}).folga_antecipacao_analisada_por_nome}/><DT t="Analisada em" v={dataHora(row.folga_antecipacao_analisada_em)}/></>}{access.canOperateRO&&row.folga_antecipacao_status==="pendente"&&<AprovarAntecipacao row={row} onDone={load}/>}</section>}
       <section className="card detail request-data">
         <h2>Dados da solicitação</h2>
+        {erroIdentificacaoSolicitante&&<div className="alert">Não foi possível carregar a identificação do solicitante. Tente atualizar a página.</div>}
         <dl>
           <DT t="Funcionário" v={resolveSolicitacaoColaborador(row)?.nome} />
           <DT
@@ -1700,7 +1715,7 @@ export function Detalhe({ access, userId }: { access: Access; userId: string }) 
         ["em_analise", "em_andamento"].includes(row.status) && compraFolgaLiberada(row.folga_antecipacao_status) && (
           <Compra row={row} onDone={load} />
         )}
-      {access.canOperateRO && !row.excluida_em && ["passagem_comprada", "finalizada"].includes(row.status) && (
+      {access.isDenise && !row.excluida_em && ["passagem_comprada", "finalizada"].includes(row.status) && (
         <Compra row={row} onDone={load} complementar />
       )}
       {access.canOperateRO && !row.excluida_em && row.necessita_hospedagem && !["cancelada","recusada"].includes(row.status) && <HospedagemOperacional row={row} onDone={load} />}
@@ -1709,6 +1724,7 @@ export function Detalhe({ access, userId }: { access: Access; userId: string }) 
         custos={row.custos || []}
         canViewCosts={canViewFinancialCosts(access)}
         canEditCosts={access.canOperateRO && !row.excluida_em && !["cancelada", "recusada"].includes(row.status)}
+        canEditPassage={access.isDenise && !row.excluida_em && !["cancelada", "recusada"].includes(row.status)}
         solicitacaoId={row.id}
         onCostUpdated={load}
       />
@@ -1780,6 +1796,41 @@ function RecusarSolicitacao({row,onDone}:{row:Solicitacao;onDone:()=>void}) {
     {aberto&&<div className="rejection-backdrop" role="dialog" aria-modal="true" aria-labelledby="rejection-title"><div className="rejection-modal"><h2 id="rejection-title">Recusar solicitação</h2><div className="error">Esta ação é definitiva. O solicitante precisará criar uma nova solicitação com os dados corrigidos.</div>{erro&&<div className="error">{erro}</div>}<label>Motivo da recusa *<textarea rows={5} value={motivo} onChange={(e)=>setMotivo(e.target.value)} autoFocus/><small>{util.length}/10 caracteres mínimos</small></label><div className="actions"><button className="btn secondary" disabled={busy} onClick={()=>{setAberto(false);setErro("");}}>Cancelar</button><button className="btn danger" disabled={busy||!motivoRecusaValido(util)} onClick={confirmar}>{busy?"Recusando...":"Confirmar recusa"}</button></div></div></div>}
   </>;
 }
+function AprovacaoIndividual({row,onDone}:{row:Solicitacao;onDone:()=>void}) {
+  const [busy,setBusy]=useState(false);
+  const [motivo,setMotivo]=useState("");
+  const [erro,setErro]=useState("");
+  async function decidir(aprovar:boolean) {
+    if (busy) return;
+    if (!aprovar && motivo.trim().length<10) {
+      setErro("Informe o motivo da reprovação com pelo menos 10 caracteres.");
+      return;
+    }
+    setBusy(true);
+    setErro("");
+    const {error}=await supabase.rpc(
+      aprovar ? "ro_aprovar_solicitacao" : "ro_reprovar_solicitacao",
+      aprovar ? {p_solicitacao_id:row.id} : {p_solicitacao_id:row.id,p_motivo:motivo},
+    );
+    setBusy(false);
+    if (error) { setErro(error.message); return; }
+    onDone();
+  }
+  return <section className="card approval-card">
+    <h2>Aprovação pendente</h2>
+    <p>Esta solicitação foi destinada exclusivamente a você.</p>
+    <label className="approval-rejection-field">
+      <span>Motivo da reprovação</span>
+      <textarea rows={3} value={motivo} minLength={10} onChange={(e)=>setMotivo(e.target.value)} placeholder="Obrigatório ao reprovar"/>
+    </label>
+    {erro&&<div className="error">{erro}</div>}
+    <div className="actions">
+      <button className="btn secondary" disabled={busy} onClick={()=>void decidir(false)}>Reprovar</button>
+      <button className="btn primary" disabled={busy} onClick={()=>void decidir(true)}>Aprovar</button>
+    </div>
+  </section>;
+}
+
 function AprovarAntecipacao({row,onDone}:{row:Solicitacao;onDone:()=>void}){const[busy,setBusy]=useState(false);const[erro,setErro]=useState("");async function aprovar(){if(busy)return;setBusy(true);const{error}=await supabase.rpc("ro_aprovar_antecipacao_folga",{p_solicitacao_id:row.id});setErro(error?"Não foi possível aprovar a antecipação.":"");setBusy(false);if(!error)onDone();}return <div className="wide">{erro&&<div className="error">{erro}</div>}<button className="btn primary" disabled={busy} onClick={aprovar}>{busy?"Aprovando...":"Aprovar antecipação"}</button></div>}
 function Assumir({ row, onDone }: { row: Solicitacao; onDone: () => void }) {
   const [busy, setBusy] = useState(false);
@@ -1959,6 +2010,7 @@ function PassagemComprada({
   custos,
   canViewCosts,
   canEditCosts,
+  canEditPassage,
   solicitacaoId,
   onCostUpdated,
 }: {
@@ -1966,6 +2018,7 @@ function PassagemComprada({
   custos: Custo[];
   canViewCosts: boolean;
   canEditCosts: boolean;
+  canEditPassage: boolean;
   solicitacaoId: string;
   onCostUpdated: () => void;
 }) {
@@ -2043,7 +2096,7 @@ function PassagemComprada({
           ) : (
             <div className="financial-cost-list">
               {custos.map((custo) => <OperationalCostRow key={custo.id} custo={custo}
-                label={custoLabel(custo)} canEdit={canEditCosts && isEditableOperationalCost(custo.tipo)}
+                label={custoLabel(custo)} canEdit={(canEditCosts && isEditableOperationalCost(custo.tipo)) || (canEditPassage && isPassageCost(custo.tipo))}
                 solicitacaoId={solicitacaoId} onDone={onCostUpdated} />)}
             </div>
           )}
@@ -2134,11 +2187,13 @@ function OperationalCostRow({ custo, label, canEdit, solicitacaoId, onDone }: {
   const [valor, setValor] = useState(String(custo.valor));
   const [busy, setBusy] = useState(false);
   const [erro, setErro] = useState("");
+  const [justificativa,setJustificativa]=useState("");
   async function salvar() {
     const parsed = parseOperationalCostValue(valor);
     if (parsed === null) { setErro("Informe um valor maior que zero, com até duas casas decimais."); return; }
     setBusy(true); setErro("");
-    const result = await supabase.rpc("ro_atualizar_custo_operacional", {
+    if(isPassageCost(custo.tipo)&&justificativa.trim().length<10){setErro("Informe uma justificativa com pelo menos 10 caracteres.");setBusy(false);return;}
+    const result = isPassageCost(custo.tipo) ? await supabase.rpc("ro_atualizar_valor_passagem", {p_solicitacao_id:solicitacaoId,p_custo_id:custo.id,p_novo_valor:parsed,p_justificativa:justificativa}) : await supabase.rpc("ro_atualizar_custo_operacional", {
       p_solicitacao_id: solicitacaoId, p_custo_id: custo.id, p_novo_valor: parsed,
     });
     setBusy(false);
@@ -2150,6 +2205,7 @@ function OperationalCostRow({ custo, label, canEdit, solicitacaoId, onDone }: {
     {editing ? <div className="operational-cost-editor">
       <label>Valor de {label}<input autoFocus type="number" min="0.01" step="0.01" value={valor}
         onChange={(event)=>setValor(event.target.value)} disabled={busy}/></label>
+      {isPassageCost(custo.tipo)&&<label>Justificativa *<textarea minLength={10} required value={justificativa} onChange={(e)=>setJustificativa(e.target.value)}/></label>}
       {erro && <small className="error">{erro}</small>}
       <div className="actions"><button type="button" className="btn secondary" disabled={busy}
         onClick={()=>{setEditing(false);setValor(String(custo.valor));setErro("");}}>Cancelar</button>
@@ -2412,7 +2468,7 @@ function Compra({
           .normalize("NFD")
           .replace(/[\\u0300-\\u036f]/g, "")
           .replace(/[^a-zA-Z0-9._-]/g, "-");
-        const storagePath = row.id + "/" + crypto.randomUUID() + "-" + safeName;
+        const storagePath = row.id + (complementar ? "/complementares/" : "/") + crypto.randomUUID() + "-" + safeName;
         storagePaths.push(storagePath);
         const upload = await supabase.storage
           .from("ro-passagem-anexos")

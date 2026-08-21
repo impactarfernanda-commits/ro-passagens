@@ -10,7 +10,7 @@ const verify=readFileSync(new URL("../supabase/manual/verificar_regra_data_ida.s
 
 test("formulário não exibe primeiro embarque nem datetime-local",()=>{assert.doesNotMatch(form,/Primeiro embarque/i);assert.doesNotMatch(form,/type="datetime-local"/i);});
 test("data de ida tem min dinâmico",()=>assert.match(page,/min=\{dataMinimaInput\}/));
-test("submit bloqueia data inválida antes da RPC",()=>assert.match(page,/form\.data_ida < dataMinimaInput[\s\S]*return;[\s\S]*supabase\.rpc\("ro_criar_solicitacao_colaborador_validada"/));
+test("submit bloqueia data inválida antes da RPC",()=>assert.match(page,/form\.data_ida < dataMinimaInput[\s\S]*return;[\s\S]*supabase\.rpc\("ro_criar_solicitacao_com_aprovador"/));
 test("interface não mostra explicações antigas",()=>{assert.doesNotMatch(page,/Primeira data permitida/i);assert.doesNotMatch(page,/embarque precisa estar no futuro/i);});
 test("exceção gerencial é opt-in, respeita a regra e é enviada explicitamente",()=>{assert.match(page,/Solicitar exceção de prazo/);assert.match(page,/solicitar_excecao_prazo:gerencial&&permiteExcecaoPrazo&&solicitarExcecao/);});
 test("migration é complementar e transacional",()=>{assert.match(sql,/^begin;/i);assert.match(sql,/commit;\s*$/i);assert.doesNotMatch(sql,/drop\s+(?:column|table)|truncate|delete\s+from\s+public\.ro_passagem_solicitacoes/i);});

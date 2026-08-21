@@ -28,6 +28,8 @@ export type Access = {
   role: string | null;
   isRh: boolean;
   canManageRh: boolean;
+  canApprove: boolean;
+  isDenise: boolean;
 };
 
 const EMPTY_ACCESS: Access = {
@@ -40,6 +42,8 @@ const EMPTY_ACCESS: Access = {
   role: null,
   isRh: false,
   canManageRh: false,
+  canApprove: false,
+  isDenise: false,
 };
 
 export function App() {
@@ -87,8 +91,10 @@ export function App() {
       supabase.rpc("ro_is_system_admin", { p_user: session.user.id }),
       supabase.rpc("ro_is_rh_active", { p_user_id: session.user.id }),
       supabase.rpc("ro_can_manage_rh"),
+      supabase.rpc("ro_is_approval_candidate"),
+      supabase.rpc("ro_is_denise"),
     ])
-      .then(([roles, ro, systemAdmin, rh, manageRh]) => {
+      .then(([roles, ro, systemAdmin, rh, manageRh, approver, denise]) => {
         const names = (roles.data || []).map((r) => String(r.role));
         const role = names.includes("diretor") ? "diretor" : names.includes("gerente") ? "gerente" : names[0] || null;
         const isAdmin = names.some((r) => ["gerente", "diretor"].includes(r));
@@ -103,6 +109,8 @@ export function App() {
           canImport: Boolean(systemAdmin.data),
           isRh: Boolean(rh.data),
           canManageRh: Boolean(manageRh.data),
+          canApprove: Boolean(approver.data),
+          isDenise: Boolean(denise.data),
         });
       })
       .finally(() => setAccessLoading(false));
@@ -137,6 +145,7 @@ export function App() {
               canConfigure={access.canImport}
               canImportAddresses={canAccessAddressImport}
               isRh={access.isRh}
+              canApprove={access.canApprove}
             />
             <section className="content">
               <Header onMenu={() => setSide(true)} />
@@ -157,6 +166,7 @@ export function App() {
                     <Solicitacoes access={access} userId={session.user.id} />
                   }
                 />
+                <Route path="/minhas-aprovacoes" element={access.canApprove ? <Solicitacoes access={access} userId={session.user.id} approvalsOnly /> : <Navigate to="/solicitacoes" replace />} />
                 <Route
                   path="/relatorios"
                   element={

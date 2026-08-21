@@ -34,8 +34,9 @@ test("valores inválidos são rejeitados no cliente", () => {
   assert.equal(parseOperationalCostValue("110,50"), 110.5);
 });
 
-test("todos os valores, inclusive passagem, são editáveis pelo fluxo auditado", () => {
-  for (const tipo of ["passagem", "uber", "hospedagem", "refeicao", "outros"] as const) assert.equal(isEditableOperationalCost(tipo), true);
+test("passagem não é custo operacional genericamente editável", () => {
+  assert.equal(isEditableOperationalCost("passagem"), false);
+  for (const tipo of ["uber", "hospedagem", "refeicao", "outros"] as const) assert.equal(isEditableOperationalCost(tipo), true);
 });
 
 test("UI expõe edição somente ao operador e recarrega custo e total após salvar", () => {

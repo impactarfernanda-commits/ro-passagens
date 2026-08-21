@@ -3,12 +3,17 @@ import type { Custo } from "./types";
 export type EditableOperationalCostType = Custo["tipo"];
 
 export const EDITABLE_OPERATIONAL_COST_TYPES: readonly EditableOperationalCostType[] = [
-  "passagem",
   "hospedagem",
   "uber",
   "refeicao",
   "outros",
 ];
+
+export const DENISE_EMAIL = "denise.pires@tanksbr.com.br";
+
+export function isPassageCost(tipo: Custo["tipo"]) {
+  return tipo === "passagem";
+}
 
 export function isEditableOperationalCost(tipo: Custo["tipo"]): tipo is EditableOperationalCostType {
   return EDITABLE_OPERATIONAL_COST_TYPES.includes(tipo as EditableOperationalCostType);

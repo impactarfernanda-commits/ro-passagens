@@ -5,6 +5,7 @@ export const NOVA_SOLICITACAO_DRAFT_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 
 export type NovaSolicitacaoForm = {
   funcionario_id: string;
+  aprovador_id: string;
   obra_id: string;
   origem: string;
   destino: string;
@@ -37,7 +38,7 @@ export type NovaSolicitacaoDraftData = {
 type StoredDraft = NovaSolicitacaoDraftData & { version: number; updatedAt: string };
 
 export const emptyNovaSolicitacaoForm = (): NovaSolicitacaoForm => ({
-  funcionario_id: "", obra_id: "", origem: "", destino: "", motivo: "",
+  funcionario_id: "", aprovador_id: "", obra_id: "", origem: "", destino: "", motivo: "",
   desligamento_subtipo: "", data_ida: "", data_retorno: "", destino_retorno: "",
   centro_custo_retorno_id: "", retorno_indefinido: false,
   centro_custo_destino_id: "", justificativa_excecao_prazo: "",

@@ -86,6 +86,11 @@ export type Solicitacao = {
   colaborador_id?: string | null;
   obra_id: string | null;
   solicitante_id: string;
+  aprovador_id?: string | null;
+  aprovacao_status?: "pendente" | "aprovada" | "reprovada" | "dispensada";
+  aprovado_em?: string | null;
+  reprovado_em?: string | null;
+  motivo_reprovacao_aprovador?: string | null;
   origem: string;
   destino: string;
   motivo: Motivo | null;

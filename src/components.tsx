@@ -1,6 +1,7 @@
 import {
   Bell,
   BarChart3,
+  CheckCircle2,
   House,
   LayoutDashboard,
   ListChecks,
@@ -51,6 +52,7 @@ export function Sidebar({
   canConfigure,
   canImportAddresses,
   isRh,
+  canApprove,
 }: {
   open: boolean;
   onClose: () => void;
@@ -59,6 +61,7 @@ export function Sidebar({
   canConfigure: boolean;
   canImportAddresses: boolean;
   isRh: boolean;
+  canApprove: boolean;
 }) {
   const canViewGeneralAreas = canViewAll && (!isRh || canConfigure);
   const links = [
@@ -89,6 +92,7 @@ export function Sidebar({
               Relatórios
             </NavLink>
           )}
+          {canApprove && <NavLink to="/minhas-aprovacoes" onClick={onClose}><CheckCircle2 size={19} />Minhas aprovações</NavLink>}
           {canImportAddresses && (
             <NavLink to="/rh/enderecos" onClick={onClose}>
               <Upload size={19} />
