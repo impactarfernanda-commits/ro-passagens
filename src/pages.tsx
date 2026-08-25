@@ -58,6 +58,7 @@ import { resolveUserLabel } from "./userLabelResolution";
 import { isEditableOperationalCost, isPassageCost, parseOperationalCostValue } from "./operationalCostRules";
 import { approvalStatusLabel, approvalWaitingLabel, isApprovalOperationallyReleased, matchesApprovalFilter, type ApprovalFilter } from "./approvalVisibility";
 import { approvalDecisionErrorMessage } from "./approvalErrorMessages";
+import { canShowSolicitacaoDeletion, deletionErrorMessage, normalizeDeletionReason } from "./solicitacaoDeletion";
 import { autoMapHeaders, buildCollaboratorSuggestions, canKeepAsExternal, duplicateCpfRows, formatCpf, formatPhone, isSpreadsheetRows, isValidCpf, matchCollaborator, MAX_RH_XLSX_BYTES, normalizeCpf, normalizePhone, parseBirthDate, possibleMatches, resolveCollaboratorSuggestion, strongAuxiliaryMatches, validUf, type AddressField, type CollaboratorSuggestion, type ColumnMapping, type SpreadsheetRows } from "./addressImport";
 import type {
   Anexo,
@@ -1776,7 +1777,7 @@ export function Detalhe({ access, userId }: { access: Access; userId: string }) 
         solicitacaoId={row.id}
         onCostUpdated={load}
       />
-      {access.canOperateRO && operacaoLiberada && !row.excluida_em && <ExcluirSolicitacao row={row} />}
+      {canShowSolicitacaoDeletion(access.canOperateRO, row.aprovacao_status, row.excluida_em) && <ExcluirSolicitacao row={row} />}
       <div className="grid two detail">
         <section className="card">
           <h2>Notificações</h2>
@@ -2003,16 +2004,16 @@ function Operacoes({ row, onDone }: { row: Solicitacao; onDone: () => void }) {
 }
 
 function ExcluirSolicitacao({row}:{row:Solicitacao}) {
-  const nav=useNavigate(); const[busy,setBusy]=useState(false); const[erro,setErro]=useState("");
+  const nav=useNavigate(); const[aberto,setAberto]=useState(false); const[motivo,setMotivo]=useState(""); const[busy,setBusy]=useState(false); const[erro,setErro]=useState("");
+  function fechar(){if(busy)return;setAberto(false);setMotivo("");setErro("");}
   async function excluir(){
-    const motivo=window.prompt("Informe o motivo da exclusão (erro, teste ou outro):")?.trim();
-    if(!motivo)return;
-    if(!window.confirm("Excluir esta solicitação do fluxo? Ela ficará disponível em Solicitações excluídas."))return;
+    const motivoNormalizado=normalizeDeletionReason(motivo);
+    if(!motivoNormalizado){setErro("Informe o motivo da exclusão.");return;}
     setBusy(true);setErro("");
-    const {error}=await supabase.rpc("ro_excluir_solicitacao",{p_solicitacao_id:row.id,p_motivo:motivo});
-    setBusy(false);if(error){setErro(error.message);return;}nav("/solicitacoes?excluidas=true");
+    const {error}=await supabase.rpc("ro_excluir_solicitacao",{p_solicitacao_id:row.id,p_motivo:motivoNormalizado});
+    setBusy(false);if(error){setErro(deletionErrorMessage(error.message));return;}nav("/solicitacoes?excluidas=true");
   }
-  return <section className="card operations"><h2>Exclusão da solicitação</h2><p>Use apenas para registros criados por engano ou para teste. Os dados e a autoria serão preservados no arquivo de excluídas.</p>{erro&&<div className="error">{erro}</div>}<button className="btn danger" disabled={busy} onClick={()=>void excluir()}><Trash2 size={17}/>{busy?"Excluindo...":"Excluir solicitação"}</button></section>;
+  return <section className="card administrative-actions"><h2>Ações administrativas</h2><p>Use apenas para registros criados por engano, duplicidade ou teste.</p><button className="btn danger" type="button" onClick={()=>setAberto(true)}><Trash2 size={17}/>Excluir solicitação</button>{aberto&&<div className="deletion-backdrop" role="presentation"><section className="deletion-modal" role="dialog" aria-modal="true" aria-labelledby="deletion-title"><h2 id="deletion-title">Excluir solicitação</h2><p>Esta ação removerá a solicitação das listagens operacionais, mas manterá o histórico e os registros vinculados.</p><label>Motivo da exclusão<textarea value={motivo} maxLength={500} rows={4} autoFocus disabled={busy} onChange={(event)=>setMotivo(event.target.value)} /></label>{erro&&<div className="error" role="alert">{erro}</div>}<div className="actions"><button className="btn secondary" type="button" disabled={busy} onClick={fechar}>Cancelar</button><button className="btn danger" type="button" disabled={busy} onClick={()=>void excluir()}><Trash2 size={17}/>{busy?"Excluindo...":"Excluir solicitação"}</button></div></section></div>}</section>;
 }
 function DT({ t, v }: { t: string; v?: string | null }) {
   return (
