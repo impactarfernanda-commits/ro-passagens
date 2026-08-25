@@ -56,6 +56,7 @@ import { COMPRA_HORARIO_ALERTA, horarioLocalDaPartida, partidaAnteriorAoSolicita
 import { HOSPEDAGEM_ATTACHMENT_TYPE, isHospedagemAttachment, parseHospedagemValor } from "./hospedagemOperationalRules";
 import { resolveUserLabel } from "./userLabelResolution";
 import { isEditableOperationalCost, isPassageCost, parseOperationalCostValue } from "./operationalCostRules";
+import { approvalStatusLabel, approvalWaitingLabel, isApprovalOperationallyReleased, matchesApprovalFilter, type ApprovalFilter } from "./approvalVisibility";
 import { autoMapHeaders, buildCollaboratorSuggestions, canKeepAsExternal, duplicateCpfRows, formatCpf, formatPhone, isSpreadsheetRows, isValidCpf, matchCollaborator, MAX_RH_XLSX_BYTES, normalizeCpf, normalizePhone, parseBirthDate, possibleMatches, resolveCollaboratorSuggestion, strongAuxiliaryMatches, validUf, type AddressField, type CollaboratorSuggestion, type ColumnMapping, type SpreadsheetRows } from "./addressImport";
 import type {
   Anexo,
@@ -728,6 +729,7 @@ export function Solicitacoes({
   const [loading, setLoading] = useState(true);
   const [filters, setFilters] = useState({
     status: "",
+    aprovacao: "" as ApprovalFilter,
     motivo: motivoInicial,
     funcionario: "",
     obra: "",
@@ -752,7 +754,7 @@ export function Solicitacoes({
     const ids = [
       ...new Set(
         loaded
-          .flatMap((r) => [r.solicitante_id, responsavelId(r)])
+          .flatMap((r) => [r.solicitante_id, responsavelId(r), r.aprovador_id])
           .filter(Boolean) as string[],
       ),
     ];
@@ -811,6 +813,7 @@ export function Solicitacoes({
           ? ["em_andamento", "em_analise"].includes(r.status)
           : r.status === filters.status)) &&
       (!filters.motivo || r.motivo === filters.motivo) &&
+      matchesApprovalFilter(r.aprovacao_status, filters.aprovacao) &&
       (!imprevistoAtivo ||
         r.houve_imprevisto ||
         (r.anexos || []).some((a) => a.complementar || a.imprevisto)) &&
@@ -864,6 +867,17 @@ export function Solicitacoes({
             </option>
           ))}
         </select>
+        {!approvalsOnly && <select
+          aria-label="Filtrar por aprovação"
+          value={filters.aprovacao}
+          onChange={(e) => setFilters({ ...filters, aprovacao: e.target.value as ApprovalFilter })}
+        >
+          <option value="">Todas as aprovações</option>
+          <option value="pendente">Pendentes</option>
+          <option value="aprovada">Aprovadas</option>
+          <option value="reprovada">Reprovadas</option>
+          <option value="dispensada">Dispensadas</option>
+        </select>}
         <select
           value={imprevistoAtivo ? "true" : ""}
           onChange={(e) => alterarImprevisto(e.target.value === "true")}
@@ -908,6 +922,7 @@ export function Solicitacoes({
                 <th>Funcionário</th>
                 <th>Solicitante</th>
                 {access.canViewAll && <th>Responsável RO</th>}
+                {(access.canViewAll || approvalsOnly) && <th>Aprovação</th>}
                 <th>Trecho</th>
                 <th>Motivo</th>
                 <th>Data ida</th>
@@ -920,7 +935,7 @@ export function Solicitacoes({
               {shown.map((r) => {
                 const roId = responsavelId(r);
                 return (
-                  <tr key={r.id}>
+                  <tr key={r.id} className={r.aprovacao_status === "pendente" ? "approval-awaiting" : undefined}>
                     <td>
                       <strong>{resolveSolicitacaoColaborador(r)?.nome || "—"}</strong>
                       <small>{formatCentroCustoLabel(r.obra) || "Sem obra"}</small>
@@ -945,6 +960,15 @@ export function Solicitacoes({
                         {roId && assumidaEm(r) && (
                           <small>Assumida em {dataHora(assumidaEm(r))}</small>
                         )}
+                      </td>
+                    )}
+                    {(access.canViewAll || approvalsOnly) && (
+                      <td>
+                        <span className={`badge approval-${r.aprovacao_status || "dispensada"}`}>
+                          {r.aprovacao_status === "pendente" ? "Aguardando aprovação" : approvalStatusLabel(r.aprovacao_status)}
+                        </span>
+                        {r.aprovacao_status === "pendente" && <small>{approvalWaitingLabel(r.created_at)}</small>}
+                        {r.aprovador_id && <small>{r.aprovacao_status === "pendente" ? "Aguardando aprovação de " : "Aprovador: "}{userLabels[r.aprovador_id] || "Aprovador sem identificação"}</small>}
                       </td>
                     )}
                     <td>
@@ -1564,6 +1588,7 @@ export function Detalhe({ access, userId }: { access: Access; userId: string }) 
             anexo.criado_por || anexo.uploaded_by;
           const ids = [
             found.solicitante_id,
+            found.aprovador_id,
             responsavelId,
             found.excluida_por,
             found.recusada_por,
@@ -1591,6 +1616,9 @@ export function Detalhe({ access, userId }: { access: Access; userId: string }) 
             },
             responsavel_ro_nome: responsavelId
               ? labelMap.get(responsavelId) || "Responsável sem identificação"
+              : null,
+            aprovador_nome: found.aprovador_id
+              ? labelMap.get(found.aprovador_id) || "Aprovador sem identificação"
               : null,
             recusada_por_nome: found.recusada_por
               ? labelMap.get(found.recusada_por) || "Integrante RO sem identificação"
@@ -1627,6 +1655,7 @@ export function Detalhe({ access, userId }: { access: Access; userId: string }) 
         <div className="error">{erro || "Registro não encontrado."}</div>
       </Page>
     );
+  const operacaoLiberada = isApprovalOperationallyReleased(row.aprovacao_status);
   return (
     <Page
       title={resolveSolicitacaoColaborador(row)?.nome || "Solicitação"}
@@ -1640,6 +1669,9 @@ export function Detalhe({ access, userId }: { access: Access; userId: string }) 
     >
       <div className="detail-head">
         <StatusBadge status={statusLabel[row.status]} />
+        <span className={`badge approval-${row.aprovacao_status || "dispensada"}`}>
+          {row.aprovacao_status === "pendente" ? "Aguardando aprovação" : approvalStatusLabel(row.aprovacao_status)}
+        </span>
         <span>{formatMotivoLabel(row.motivo)}</span>
         {row.motivo === "desligamento" && (
           <span className="sensitive">
@@ -1647,9 +1679,18 @@ export function Detalhe({ access, userId }: { access: Access; userId: string }) 
           </span>
         )}
       </div>
+      <section className={`card detail approval-summary${row.aprovacao_status === "pendente" ? " approval-summary-pending" : ""}`}>
+        <h2>Aprovação</h2>
+        <dl>
+          <DT t="Status" v={row.aprovacao_status === "reprovada" ? "Reprovada na aprovação" : approvalStatusLabel(row.aprovacao_status)} />
+          <DT t="Aprovador" v={(row as Solicitacao & {aprovador_nome?: string | null}).aprovador_nome || (row.aprovacao_status === "dispensada" || !row.aprovacao_status ? "Dispensada por regra do fluxo" : "Aprovador sem identificação")} />
+          {row.aprovacao_status === "pendente" && <DT t="Tempo aguardando" v={approvalWaitingLabel(row.created_at)} />}
+          {row.aprovacao_status === "aprovada" && <DT t="Aprovada em" v={dataHora(row.aprovado_em)} />}
+          {row.aprovacao_status === "reprovada" && <><DT t="Reprovada em" v={dataHora(row.reprovado_em)} /><DT t="Motivo" v={row.motivo_reprovacao_aprovador} /></>}
+        </dl>
+      </section>
       {row.excluida_em && <section className="card rejection-summary"><h2>Solicitação excluída</h2><DT t="Excluída por" v={(row as Solicitacao & {excluida_por_nome?:string|null}).excluida_por_nome}/><DT t="Data da exclusão" v={dataHora(row.excluida_em)}/><DT t="Motivo" v={row.motivo_exclusao}/></section>}
       {row.status === "recusada" && <section className="card rejection-summary"><h2>Solicitação recusada</h2><DT t="Motivo" v={row.motivo_recusa} /><DT t="Recusada por" v={(row as Solicitacao & {recusada_por_nome?:string|null}).recusada_por_nome} /><DT t="Data" v={dataHora(row.recusada_em)} /></section>}
-      {row.aprovacao_status === "reprovada" && <section className="card rejection-summary"><h2>Reprovada pelo aprovador</h2><DT t="Motivo" v={row.motivo_reprovacao_aprovador}/><DT t="Data" v={dataHora(row.reprovado_em)}/></section>}
       {row.aprovador_id === userId && row.aprovacao_status === "pendente" && <AprovacaoIndividual row={row} onDone={load}/>}
       {row.motivo==="folga_campo"&&row.folga_antecipada&&<section className="card cycle-detail"><h2>Antecipação de folga de campo</h2><DT t="Data prevista do ciclo" v={data(row.folga_data_prevista_ciclo)}/><DT t="Data antecipada solicitada" v={data(row.data_ida)}/><DT t="Dias antecipados" v={row.folga_data_prevista_ciclo?String(Math.round((new Date(`${row.folga_data_prevista_ciclo}T12:00:00`).getTime()-new Date(`${row.data_ida}T12:00:00`).getTime())/86400000)):null}/><DT t="Justificativa" v={row.folga_antecipacao_justificativa}/><DT t="Status da análise" v={row.folga_antecipacao_status}/>{row.folga_antecipacao_status==="aprovada"&&<><DT t="Analisada por" v={(row as Solicitacao&{folga_antecipacao_analisada_por_nome?:string|null}).folga_antecipacao_analisada_por_nome}/><DT t="Analisada em" v={dataHora(row.folga_antecipacao_analisada_em)}/></>}{access.canOperateRO&&row.folga_antecipacao_status==="pendente"&&<AprovarAntecipacao row={row} onDone={load}/>}</section>}
       <section className="card detail request-data">
@@ -1703,32 +1744,38 @@ export function Detalhe({ access, userId }: { access: Access; userId: string }) 
       </section>
       {(access.isRh||access.isRO||access.canImport)&&enderecoResidencial&&<section className="card detail"><h2>Dados do passageiro</h2><dl><DT t="Nome" v={enderecoResidencial.nome||resolveSolicitacaoColaborador(row)?.nome}/><DT t="Data de nascimento" v={data(enderecoResidencial.data_nascimento)}/><DT t="CPF" v={formatCpf(enderecoResidencial.cpf)}/><DT t="RG" v={enderecoResidencial.rg}/><DT t="Telefone" v={formatPhone(enderecoResidencial.telefone)}/><DT t="Logradouro" v={enderecoResidencial.logradouro}/><DT t="Bairro" v={enderecoResidencial.bairro}/><DT t="Cidade / UF" v={`${enderecoResidencial.cidade||"—"} / ${enderecoResidencial.uf||"—"}`}/><DT t="Atualizado em" v={dataHora(enderecoResidencial.atualizado_em)}/>{row.destino_residencial_origem==="excepcional"&&<DT t="Destino alterado manualmente" v={row.destino_residencial_justificativa}/>}</dl></section>}
       {(access.isRh||access.isRO||access.isAdmin)&&documentosInternos.length>0&&<section className="card"><h2>Documentos internos restritos</h2>{documentosInternos.map((d)=><div className="actions" key={d.id}><span>{d.categoria==="termo_justa_causa"?"Termo de justa causa":"Carta de pedido de demissão"}</span>{d.url&&<a className="btn secondary" href={d.url} target="_blank" rel="noreferrer">Abrir PDF</a>}</div>)}</section>}
-      {access.canOperateRO && !row.excluida_em && <RecusarSolicitacao row={row} onDone={load} />}
+      {!operacaoLiberada && (access.canOperateRO || access.isDenise) && <AcoesOperacionaisBloqueadas
+        row={row}
+        aprovador={(row as Solicitacao & {aprovador_nome?: string | null}).aprovador_nome}
+        showRoActions={access.canOperateRO}
+        showComplementary={access.isDenise}
+      />}
+      {access.canOperateRO && operacaoLiberada && !row.excluida_em && <RecusarSolicitacao row={row} onDone={load} />}
       {row.status === "recusada" && row.solicitante_id === userId && <div className="actions rejection-recreate"><Link className="btn primary" to="/nova" state={{refazer:row.id}}>Criar nova a partir desta</Link></div>}
-      {access.canOperateRO && !row.excluida_em && row.status === "solicitada" && (
+      {access.canOperateRO && operacaoLiberada && !row.excluida_em && row.status === "solicitada" && (
         <Assumir row={row} onDone={load} />
       )}
-      {access.canOperateRO && !row.excluida_em && !["solicitada","recusada"].includes(row.status) && (
+      {access.canOperateRO && operacaoLiberada && !row.excluida_em && !["solicitada","recusada"].includes(row.status) && (
         <Operacoes row={row} onDone={load} />
       )}
-      {access.canOperateRO && !row.excluida_em &&
+      {access.canOperateRO && operacaoLiberada && !row.excluida_em &&
         ["em_analise", "em_andamento"].includes(row.status) && compraFolgaLiberada(row.folga_antecipacao_status) && (
           <Compra row={row} onDone={load} />
         )}
-      {access.isDenise && !row.excluida_em && ["passagem_comprada", "finalizada"].includes(row.status) && (
+      {access.isDenise && operacaoLiberada && !row.excluida_em && ["passagem_comprada", "finalizada"].includes(row.status) && (
         <Compra row={row} onDone={load} complementar />
       )}
-      {access.canOperateRO && !row.excluida_em && row.necessita_hospedagem && !["cancelada","recusada"].includes(row.status) && <HospedagemOperacional row={row} onDone={load} />}
+      {access.canOperateRO && operacaoLiberada && !row.excluida_em && row.necessita_hospedagem && !["cancelada","recusada"].includes(row.status) && <HospedagemOperacional row={row} onDone={load} />}
       <PassagemComprada
         anexos={row.anexos || []}
         custos={row.custos || []}
         canViewCosts={canViewFinancialCosts(access)}
-        canEditCosts={access.canOperateRO && !row.excluida_em && !["cancelada", "recusada"].includes(row.status)}
-        canEditPassage={access.isDenise && !row.excluida_em && !["cancelada", "recusada"].includes(row.status)}
+        canEditCosts={access.canOperateRO && operacaoLiberada && !row.excluida_em && !["cancelada", "recusada"].includes(row.status)}
+        canEditPassage={access.isDenise && operacaoLiberada && !row.excluida_em && !["cancelada", "recusada"].includes(row.status)}
         solicitacaoId={row.id}
         onCostUpdated={load}
       />
-      {access.canOperateRO && !row.excluida_em && <ExcluirSolicitacao row={row} />}
+      {access.canOperateRO && operacaoLiberada && !row.excluida_em && <ExcluirSolicitacao row={row} />}
       <div className="grid two detail">
         <section className="card">
           <h2>Notificações</h2>
@@ -1773,6 +1820,40 @@ export function Detalhe({ access, userId }: { access: Access; userId: string }) 
       </div>
     </Page>
   );
+}
+function AcoesOperacionaisBloqueadas({
+  row,
+  aprovador,
+  showRoActions,
+  showComplementary,
+}: {
+  row: Solicitacao;
+  aprovador?: string | null;
+  showRoActions: boolean;
+  showComplementary: boolean;
+}) {
+  const pendente = row.aprovacao_status === "pendente";
+  return <section className="card operations approval-operations-locked" aria-labelledby="approval-operations-title">
+    <h2 id="approval-operations-title">Ações operacionais</h2>
+    <div className={pendente ? "approval-operation-notice pending" : "approval-operation-notice rejected"} role="status">
+      <strong>{pendente
+        ? `Aguardando aprovação de ${aprovador || "Aprovador sem identificação"}`
+        : "Solicitação reprovada na etapa de aprovação."}</strong>
+      {pendente && <span>As ações operacionais serão liberadas após a aprovação.</span>}
+      {!pendente && row.motivo_reprovacao_aprovador && <span>Motivo: {row.motivo_reprovacao_aprovador}</span>}
+    </div>
+    <div className="approval-disabled-actions" aria-label="Ações indisponíveis enquanto a aprovação não for liberada">
+      {showRoActions && <>
+        <button type="button" className="btn primary" disabled>Assumir solicitação</button>
+        <button type="button" className="btn primary" disabled>Registrar/comprar passagem</button>
+        <button type="button" className="btn secondary" disabled>Lançar custos</button>
+        <button type="button" className="btn secondary" disabled>Anexar documentos operacionais</button>
+        <button type="button" className="btn secondary" disabled>Finalizar atividades do RO</button>
+        <button type="button" className="btn danger" disabled>Recusar solicitação</button>
+      </>}
+      {(showRoActions || showComplementary) && <button type="button" className="btn secondary" disabled>Lançar passagem complementar</button>}
+    </div>
+  </section>;
 }
 function RecusarSolicitacao({row,onDone}:{row:Solicitacao;onDone:()=>void}) {
   const [aberto,setAberto]=useState(false);
