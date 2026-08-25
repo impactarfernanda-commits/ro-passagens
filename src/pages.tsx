@@ -57,6 +57,7 @@ import { HOSPEDAGEM_ATTACHMENT_TYPE, isHospedagemAttachment, parseHospedagemValo
 import { resolveUserLabel } from "./userLabelResolution";
 import { isEditableOperationalCost, isPassageCost, parseOperationalCostValue } from "./operationalCostRules";
 import { approvalStatusLabel, approvalWaitingLabel, isApprovalOperationallyReleased, matchesApprovalFilter, type ApprovalFilter } from "./approvalVisibility";
+import { approvalDecisionErrorMessage } from "./approvalErrorMessages";
 import { autoMapHeaders, buildCollaboratorSuggestions, canKeepAsExternal, duplicateCpfRows, formatCpf, formatPhone, isSpreadsheetRows, isValidCpf, matchCollaborator, MAX_RH_XLSX_BYTES, normalizeCpf, normalizePhone, parseBirthDate, possibleMatches, resolveCollaboratorSuggestion, strongAuxiliaryMatches, validUf, type AddressField, type CollaboratorSuggestion, type ColumnMapping, type SpreadsheetRows } from "./addressImport";
 import type {
   Anexo,
@@ -1894,7 +1895,7 @@ function AprovacaoIndividual({row,onDone}:{row:Solicitacao;onDone:()=>void}) {
       aprovar ? {p_solicitacao_id:row.id} : {p_solicitacao_id:row.id,p_motivo:motivo},
     );
     setBusy(false);
-    if (error) { setErro(error.message); return; }
+    if (error) { setErro(approvalDecisionErrorMessage(error.message)); return; }
     onDone();
   }
   return <section className="card approval-card">
