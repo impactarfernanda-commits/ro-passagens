@@ -13,8 +13,11 @@ export type ValidacaoInput = {
 export const RH_MOTIVOS: Motivo[] = ["admissao", "desligamento", "inicio_obra"];
 export const MOTIVOS_CRIACAO: Motivo[] = ["ferias", "folga_campo", "desligamento", "transferencia_obra", "admissao", "inicio_obra", "retorno_obra", "recesso", "viagem_administrativa"];
 
+export const isGerencial = (role: string | null) => role === "gerente" || role === "diretor";
+export const canExcepcionarPrazo = (role: string | null) => role === "coordenador" || isGerencial(role);
+
 export function motivosPermitidos(role: string | null, isRh: boolean) {
-  if (role === "gerente" || role === "diretor") return MOTIVOS_CRIACAO;
+  if (isGerencial(role)) return MOTIVOS_CRIACAO;
   if (isRh) return RH_MOTIVOS;
   return MOTIVOS_CRIACAO.filter((motivo) => motivo !== "admissao");
 }
@@ -79,8 +82,8 @@ export function mensagemAntecedencia(motivo: Motivo | null, subtipo?: Desligamen
   return `Antecedência mínima: ${regra.quantidade} ${regra.tipo === "dias_uteis" ? "dias úteis" : "dias corridos"}.`;
 }
 
-export function dataMinimaDoInput(dataMinimaNormal: string, hojeLocal: string, gerencial: boolean, solicitarExcecao: boolean) {
-  return gerencial && solicitarExcecao ? hojeLocal : dataMinimaNormal;
+export function dataMinimaDoInput(dataMinimaNormal: string, hojeLocal: string, podeExcepcionar: boolean, solicitarExcecao: boolean) {
+  return podeExcepcionar && solicitarExcecao ? hojeLocal : dataMinimaNormal;
 }
 
 export function limparDataIdaInvalida(dataIda: string, minimo: string) {
@@ -95,7 +98,7 @@ export function calendarYearsToInvalidate(operation:"INSERT"|"UPDATE"|"DELETE",o
 }
 
 export function validarSolicitacao(input: ValidacaoInput) {
-  const bloqueios: string[]=[]; const gerencial=input.role==="gerente"||input.role==="diretor";
+  const bloqueios: string[]=[]; const podeExcepcionar=canExcepcionarPrazo(input.role);
   if(input.motivo===null&&!input.canUseAdministrativeNull)bloqueios.push("MOTIVO_ADMINISTRATIVO_NAO_PERMITIDO");
   if (input.motivo==="viagem_diretoria" || (input.motivo && !motivosPermitidos(input.role,input.isRh).includes(input.motivo))) bloqueios.push("MOTIVO_NAO_PERMITIDO");
   if(input.motivo==="desligamento"&&!input.desligamentoSubtipo)bloqueios.push("SUBTIPO_DESLIGAMENTO_OBRIGATORIO");
@@ -106,11 +109,11 @@ export function validarSolicitacao(input: ValidacaoInput) {
   const regra=regraPrazo(input.motivo,input.desligamentoSubtipo); const calculo=calcularDataMinima(input.agora,regra.tipo,regra.quantidade,input.diasNaoUteis,input.anos);
   if(calculo.anosPendentes.length)bloqueios.push(`CALENDARIO_INCOMPLETO:${calculo.anosPendentes[0]}`);
   const foraDoPrazo=Boolean(dataIda&&dataIda<calculo.data);
-  if(foraDoPrazo&&!gerencial)bloqueios.push("FORA_DO_PRAZO");
-  if(foraDoPrazo&&gerencial&&!input.solicitarExcecao)bloqueios.push("EXCECAO_PRAZO_NAO_SOLICITADA");
-  if(foraDoPrazo&&gerencial&&input.solicitarExcecao&&(input.justificativa?.trim().length||0)<10)bloqueios.push("JUSTIFICATIVA_EXCECAO_OBRIGATORIA");
+  if(foraDoPrazo&&!podeExcepcionar)bloqueios.push("FORA_DO_PRAZO");
+  if(foraDoPrazo&&podeExcepcionar&&!input.solicitarExcecao)bloqueios.push("EXCECAO_PRAZO_NAO_SOLICITADA");
+  if(foraDoPrazo&&podeExcepcionar&&input.solicitarExcecao&&(input.justificativa?.trim().length||0)<10)bloqueios.push("JUSTIFICATIVA_EXCECAO_OBRIGATORIA");
   const categoria=categoriaDocumento(input.desligamentoSubtipo); const docs=input.documentos||[];
   if(categoria&&!docs.some((d)=>d.categoria===categoria))bloqueios.push(`DOCUMENTO_INTERNO_OBRIGATORIO:${categoria}`);
   for(const doc of docs){if(doc.mimeType!=="application/pdf")bloqueios.push("DOCUMENTO_NAO_PDF");if(doc.tamanhoBytes<=0||doc.tamanhoBytes>10*1024*1024)bloqueios.push("DOCUMENTO_TAMANHO_INVALIDO");}
-  return {bloqueios:[...new Set(bloqueios)],foraDoPrazo,dataMinimaPermitida:calculo.data,regra,categoriaDocumentoObrigatorio:categoria,permiteExcecao:gerencial&&!calculo.anosPendentes.length};
+  return {bloqueios:[...new Set(bloqueios)],foraDoPrazo,dataMinimaPermitida:calculo.data,regra,categoriaDocumentoObrigatorio:categoria,permiteExcecao:podeExcepcionar&&!calculo.anosPendentes.length};
 }

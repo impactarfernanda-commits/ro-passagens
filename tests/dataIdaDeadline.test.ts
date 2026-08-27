@@ -12,7 +12,7 @@ test("formulário não exibe primeiro embarque nem datetime-local",()=>{assert.d
 test("data de ida tem min dinâmico",()=>assert.match(page,/min=\{dataMinimaInput\}/));
 test("submit bloqueia data inválida antes da RPC",()=>assert.match(page,/form\.data_ida < dataMinimaInput[\s\S]*return;[\s\S]*supabase\.rpc\("ro_criar_solicitacao_com_aprovador"/));
 test("interface não mostra explicações antigas",()=>{assert.doesNotMatch(page,/Primeira data permitida/i);assert.doesNotMatch(page,/embarque precisa estar no futuro/i);});
-test("exceção gerencial é opt-in, respeita a regra e é enviada explicitamente",()=>{assert.match(page,/Solicitar exceção de prazo/);assert.match(page,/solicitar_excecao_prazo:gerencial&&permiteExcecaoPrazo&&solicitarExcecao/);});
+test("exceção autorizada é opt-in, respeita a regra e é enviada explicitamente",()=>{assert.match(page,/Solicitar exceção de prazo/);assert.match(page,/solicitar_excecao_prazo:podeExcepcionarPrazo&&permiteExcecaoPrazo&&solicitarExcecao/);});
 test("migration é complementar e transacional",()=>{assert.match(sql,/^begin;/i);assert.match(sql,/commit;\s*$/i);assert.doesNotMatch(sql,/drop\s+(?:column|table)|truncate|delete\s+from\s+public\.ro_passagem_solicitacoes/i);});
 test("banco valida exclusivamente new.data_ida",()=>{assert.match(sql,/if new\.data_ida is null/);assert.match(sql,/if new\.data_ida<v_hoje/);assert.match(sql,/if new\.data_ida<v_min/);assert.doesNotMatch(sql,/v_primeiro|primeiro_embarque_em\s*[<>=]/i);});
 test("RPC ignora primeiro embarque do cliente",()=>assert.match(sql,/data_ida,primeiro_embarque_em[\s\S]*nullif\(p_solicitacao->>'data_ida',''\)::date,null,/i));
