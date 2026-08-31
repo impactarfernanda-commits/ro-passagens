@@ -729,6 +729,7 @@ export function Solicitacoes({
   const [rows, setRows] = useState<Solicitacao[]>([]);
   const [userLabels, setUserLabels] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
+  const [approvalView, setApprovalView] = useState<"pending" | "history">("pending");
   const [filters, setFilters] = useState({
     status: "",
     aprovacao: "" as ApprovalFilter,
@@ -749,8 +750,12 @@ export function Solicitacoes({
       .select(join)
       .filter("excluida_em", mostrandoExcluidas ? "not.is" : "is", null)
       .order("created_at", { ascending: false });
-    if (approvalsOnly) q = q.eq("aprovador_id", userId).eq("aprovacao_status", "pendente");
-    if (!approvalsOnly && !access.canViewAll && !access.isRh) q = q.eq("solicitante_id", userId);
+    if (approvalsOnly) {
+      q = q.eq("aprovador_id", userId);
+      q = approvalView === "pending"
+        ? q.eq("aprovacao_status", "pendente")
+        : q.in("aprovacao_status", ["aprovada", "reprovada"]);
+    }
     const { data } = await q;
     const loaded = (data || []) as unknown as Solicitacao[];
     const ids = [
@@ -773,7 +778,7 @@ export function Solicitacoes({
     );
     setRows(loaded);
     setLoading(false);
-  }, [access.canViewAll, access.isRh, approvalsOnly, mostrandoExcluidas, userId]);
+  }, [approvalView, approvalsOnly, mostrandoExcluidas, userId]);
   useAutoFinalization(access.canViewAll, load);
   useEffect(() => {
     load();
@@ -838,6 +843,12 @@ export function Solicitacoes({
         </div>
       }
     >
+      {approvalsOnly && (
+        <div className="settings-tabs" role="tablist" aria-label="Visões de aprovação">
+          <button type="button" role="tab" aria-selected={approvalView === "pending"} className={approvalView === "pending" ? "active" : ""} onClick={() => setApprovalView("pending")}>Pendentes da minha aprovação</button>
+          <button type="button" role="tab" aria-selected={approvalView === "history"} className={approvalView === "history" ? "active" : ""} onClick={() => setApprovalView("history")}>Minhas aprovações</button>
+        </div>
+      )}
       <div className="card filters">
         <label>
           <Search size={17} />
@@ -928,6 +939,7 @@ export function Solicitacoes({
                 <th>Trecho</th>
                 <th>Motivo</th>
                 <th>Data ida</th>
+                {approvalsOnly && approvalView === "history" && <th>Decisão em</th>}
                 <th>Status</th>
                 {mostrandoExcluidas && <th>Exclusão</th>}
                 <th></th>
@@ -981,6 +993,9 @@ export function Solicitacoes({
                       {r.necessita_hospedagem&&<small>Hospedagem</small>}
                       {r.ida_a_partir_horario&&<small>Ida ≥ {r.ida_a_partir_horario.slice(0,5)}</small>}
                     </td>
+                    {approvalsOnly && approvalView === "history" && (
+                      <td>{dataHora(r.aprovacao_status === "aprovada" ? r.aprovado_em : r.reprovado_em)}</td>
+                    )}
                     <td>
                       <StatusBadge status={statusLabel[r.status]} />
                     </td>
@@ -1773,6 +1788,7 @@ export function Detalhe({ access, userId }: { access: Access; userId: string }) 
       <PassagemComprada
         anexos={row.anexos || []}
         custos={row.custos || []}
+        orientacoesRo={row.observacoes_ro}
         canViewCosts={canViewFinancialCosts(access)}
         canEditCosts={access.canOperateRO && operacaoLiberada && !row.excluida_em && !["cancelada", "recusada"].includes(row.status)}
         canEditPassage={access.isDenise && operacaoLiberada && !row.excluida_em && !["cancelada", "recusada"].includes(row.status)}
@@ -2093,6 +2109,7 @@ function HospedagemOperacional({ row, onDone }: { row: Solicitacao; onDone: () =
 function PassagemComprada({
   anexos,
   custos,
+  orientacoesRo,
   canViewCosts,
   canEditCosts,
   canEditPassage,
@@ -2101,6 +2118,7 @@ function PassagemComprada({
 }: {
   anexos: Anexo[];
   custos: Custo[];
+  orientacoesRo: string | null;
   canViewCosts: boolean;
   canEditCosts: boolean;
   canEditPassage: boolean;
@@ -2162,6 +2180,12 @@ function PassagemComprada({
         </div>
       </div>
       {erro && <div className="error">{erro}</div>}
+      {orientacoesRo && (
+        <section className="purchase-guidance">
+          <h3>Orientações da equipe RO</h3>
+          <p>{orientacoesRo}</p>
+        </section>
+      )}
       {canViewCosts && complementares.length > 0 && (
         <div className="complementary-summary">
           <strong>Imprevistos com passagens</strong>
