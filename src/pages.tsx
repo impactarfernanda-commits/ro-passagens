@@ -37,6 +37,8 @@ import {
   statusOptions,
 } from "./lib";
 import { validatePdfFile, validatePdfSignature } from "./pdfFileValidation";
+import { AdicionarAnexo } from "./AdicionarAnexo";
+import { canAddAttachment } from "./attachmentUpload";
 import { extractTicketDataFromPdf } from "./pdfPassagem";
 import { calcularCustosSemDuplicidade } from "./passagemGrouping";
 import { deduplicateNotifications } from "./notifications";
@@ -1786,6 +1788,7 @@ export function Detalhe({ access, userId }: { access: Access; userId: string }) 
       )}
       {access.canOperateRO && operacaoLiberada && !row.excluida_em && row.necessita_hospedagem && !["cancelada","recusada"].includes(row.status) && <HospedagemOperacional row={row} onDone={load} />}
       <PassagemComprada
+        canAddAttachments={canAddAttachment(access.canOperateRO, row)}
         anexos={row.anexos || []}
         custos={row.custos || []}
         orientacoesRo={row.observacoes_ro}
@@ -2107,6 +2110,7 @@ function HospedagemOperacional({ row, onDone }: { row: Solicitacao; onDone: () =
   </form>;
 }
 function PassagemComprada({
+  canAddAttachments,
   anexos,
   custos,
   orientacoesRo,
@@ -2117,6 +2121,7 @@ function PassagemComprada({
   onCostUpdated,
 }: {
   anexos: Anexo[];
+  canAddAttachments: boolean;
   custos: Custo[];
   orientacoesRo: string | null;
   canViewCosts: boolean;
@@ -2212,6 +2217,7 @@ function PassagemComprada({
         </section>
       )}
       <h3 className="documents-heading">Documentos anexados</h3>
+      {canAddAttachments && <AdicionarAnexo solicitacaoId={solicitacaoId} onDone={onCostUpdated} />}
       {anexosPassagem.length === 0 ? (
         <p className="attachment-empty">Nenhum PDF anexado.</p>
       ) : (
@@ -2764,7 +2770,7 @@ function Compra({
             <strong>{draggingPdfs ? "Solte o PDF aqui" : "Arraste o PDF aqui ou clique para selecionar"}</strong>
             <small>Você pode adicionar vários PDFs de até 10 MB cada.</small>
           </span>
-          <input type="file" accept="application/pdf,.pdf" multiple onChange={selecionarPdfs} disabled={busy}/>
+          <input type="file" aria-label="Selecionar PDFs das passagens (opcional)" accept="application/pdf,.pdf" multiple onChange={selecionarPdfs} disabled={busy}/>
         </label>
         {pdfs.length === 0 ? (
           <div className="pdfs-empty">
@@ -3022,6 +3028,7 @@ function Compra({
           </label>
         </>
       )}
+      <p className="wide" role="status">{pdfs.length} PDF(s) selecionado(s). Confira se todos os documentos desejados foram incluídos antes de confirmar.</p>
       <div className="actions wide">
         <button
           type="button"
