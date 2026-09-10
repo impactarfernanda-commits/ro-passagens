@@ -2432,8 +2432,9 @@ type PdfDraft = {
   poltrona: string;
   localizador: string;
   numero_bilhete: string;
-  tipo_documento: "voucher" | "bilhete_embarque" | "documento_sem_valor" | "documento";
+  tipo_documento: "voucher" | "bilhete_embarque" | "hospedagem" | "documento_sem_valor" | "documento";
   valores_financeiros_divergentes: boolean;
+  valor_confirmado_manualmente: boolean;
   extracting: boolean;
   message: { kind: "success" | "warning"; text: string } | null;
 };
@@ -2505,6 +2506,7 @@ function Compra({
   );
   const totalPassagens = totalTicketValues(documentos);
   const valoresDivergentes = grupos.some((grupo) => grupo.conflictingValues);
+  const revisaoPendente = grupos.some((grupo) => grupo.needsReview);
   const updatePdf = (id: string, patch: Partial<PdfDraft>) => {
     const stored = purchaseDraftBySolicitacaoId.get(draftKey);
     if (stored)
@@ -2523,6 +2525,10 @@ function Compra({
     try {
       const extracted = await extractTicketDataFromPdf(draft.file);
       const found = Boolean(extracted.partida_em || extracted.valor_passagem);
+      const requiresManualValueConfirmation =
+        !["voucher", "bilhete_embarque", "hospedagem"].includes(
+          extracted.tipo_documento || "documento",
+        );
       updatePdf(draft.id, {
         partida_em: extracted.partida_em || "",
         valor: extracted.valor_passagem || "",
@@ -2536,15 +2542,21 @@ function Compra({
         tipo_documento: extracted.tipo_documento || "documento",
         valores_financeiros_divergentes:
           extracted.valores_financeiros_divergentes || false,
+        valor_confirmado_manualmente: false,
         extracting: false,
-        message: found
+        message: extracted.tipo_documento === "hospedagem"
+          ? {
+              kind: "warning",
+              text: "Este PDF parece ser de hospedagem e não será lançado como passagem. Use a seção Hospedagem para registrar esse custo.",
+            }
+          : found && !requiresManualValueConfirmation
           ? {
               kind: "success",
               text: "Dados extraídos automaticamente. Confira partida e valor.",
             }
           : {
               kind: "warning",
-              text: "Não foi possível identificar automaticamente os dados desta passagem. Preencha as informações manualmente.",
+              text: "Não foi possível reconhecer um valor de passagem com segurança. Confira o PDF, informe o valor e confirme-o manualmente antes de registrar.",
             },
       });
     } catch {
@@ -2552,7 +2564,7 @@ function Compra({
         extracting: false,
         message: {
           kind: "warning",
-          text: "Não foi possível identificar automaticamente os dados desta passagem. Preencha as informações manualmente.",
+          text: "Não foi possível ler texto suficiente deste PDF. Confira o documento, informe o valor e confirme-o manualmente antes de registrar.",
         },
       });
     }
@@ -2585,6 +2597,7 @@ function Compra({
         numero_bilhete: "",
         tipo_documento: "documento",
         valores_financeiros_divergentes: false,
+        valor_confirmado_manualmente: false,
         extracting: true,
         message: null,
       };
@@ -2635,6 +2648,12 @@ function Compra({
       );
       return;
     }
+    if (revisaoPendente) {
+      setErro(
+        "Há documento sem valor confiável, sem confirmação manual ou classificado como hospedagem. Revise os documentos antes de registrar a compra.",
+      );
+      return;
+    }
     const primeiraPartidaLocalParaValidar = pdfs.map((pdf) => pdf.partida_em).filter(Boolean).sort()[0];
     const horarioAnterior = !complementar && partidaAnteriorAoSolicitado(primeiraPartidaLocalParaValidar, row.ida_a_partir_horario);
     if (horarioAnterior && !confirmacaoHorarioRef.current) { setConfirmarHorario(true); return; }
@@ -2664,6 +2683,7 @@ function Compra({
               indice: indice + 1,
               quantidade: grupo.documents.length,
               valor: grupo.value,
+              compraChave: grupo.key,
             },
           ] as const),
         ),
@@ -2697,6 +2717,7 @@ function Compra({
             ? new Date(pdf.partida_em).toISOString()
             : "",
           valor: valorFinanceiro || "",
+          compra_chave: agrupamento?.compraChave || "",
           observacao: [notaAgrupamento, pdf.observacao.trim()]
             .filter(Boolean)
             .join(" "),
@@ -2939,7 +2960,10 @@ function Compra({
                           : undefined
                       }
                       onChange={(e) =>
-                        updatePdf(pdf.id, { valor: e.target.value })
+                        updatePdf(pdf.id, {
+                          valor: e.target.value,
+                          valor_confirmado_manualmente: false,
+                        })
                       }
                     />
                     {bilheteInformativo && (
@@ -2949,6 +2973,14 @@ function Compra({
                       </small>
                     )}
                   </label>
+                  {!["voucher", "bilhete_embarque", "hospedagem"].includes(pdf.tipo_documento) && pdf.valor && (
+                    <label className="wide">
+                      <span>Confirmação manual</span>
+                      <span><input type="checkbox" checked={pdf.valor_confirmado_manualmente}
+                        onChange={(e)=>updatePdf(pdf.id,{valor_confirmado_manualmente:e.target.checked})}/>
+                        Conferi o documento e confirmo este valor como custo da passagem.</span>
+                    </label>
+                  )}
                   <label className="wide">
                     Observação
                     <textarea
@@ -2967,6 +2999,8 @@ function Compra({
                     ? "Voucher/comprovante"
                     : pdf.tipo_documento === "bilhete_embarque"
                       ? "Bilhete de embarque"
+                      : pdf.tipo_documento === "hospedagem"
+                        ? "Hospedagem — não será lançado como passagem"
                       : pdf.valor
                         ? "Documento financeiro"
                         : "Documento sem valor"}
@@ -3134,6 +3168,7 @@ function Compra({
             busy ||
             extracting ||
             valoresDivergentes ||
+            revisaoPendente ||
             (complementar && pdfs.length === 0)
           }
         >

@@ -1,7 +1,7 @@
 import {
   calcularCustosSemDuplicidade,
   type PassagemDocument,
-} from "./passagemGrouping";
+} from "./passagemGrouping.ts";
 
 export type TicketCostInput = PassagemDocument;
 export type ManualCostInput = {
@@ -18,12 +18,13 @@ export function buildPurchaseCosts(
 ) {
   return [
     ...calcularCustosSemDuplicidade(pdfs)
-      .filter((group) => group.value > 0 && !group.conflictingValues)
+      .filter((group) => group.value > 0 && !group.needsReview)
       .map((group) => ({
         solicitacao_id: solicitacaoId,
         tipo: "passagem" as const,
         descricao: `Passagem agrupada (${group.documents.length} documento(s)): ${group.documents.map((pdf) => pdf.nome_arquivo).join(", ")}`,
         valor: group.value,
+        compra_chave: group.key,
         centro_custo_id: centroCustoId,
       })),
     ...(["uber", "refeicao", "outros"] as const)

@@ -126,6 +126,55 @@ const voucher = extractTicketDataFromText(
 );
 assert(voucher.tipo_documento === "voucher", "comprovante da plataforma deve ser voucher");
 
+const subtotalRacTotal = extractTicketDataFromText(
+  "SubTotal: R$ 1.865,56 RAC: R$ 35,50 Total: R$ 1.901,06",
+  "PASSAGEM AEREA.pdf",
+);
+assert(
+  subtotalRacTotal.valor_passagem === "1901.06",
+  "Total explícito deve vencer SubTotal e RAC",
+);
+const subtotalOnly = extractTicketDataFromText(
+  "SubTotal: R$ 1.865,56 RAC: R$ 35,50",
+  "PASSAGEM AEREA.pdf",
+);
+assert(
+  subtotalOnly.valor_passagem !== "1865.56",
+  "Subtotal não pode casar semanticamente como Total",
+);
+for (const [label, expected] of [
+  ["Valor Total: R$ 100,10", "100.10"],
+  ["Total da compra\nR$ 200,20", "200.20"],
+] as const) {
+  assert(
+    extractTicketDataFromText(label, "documento.pdf").valor_passagem === expected,
+    `${label} deve ser reconhecido como total final`,
+  );
+}
+const kaique = complementaryPair("KAIQUE VINICIUS CAVALCANTE DOS SANTOS", 164.67, 109.30)
+  .map((document) => ({ ...document, localizador: "1NRM0Q" }));
+const kaiqueCosts = buildPurchaseCosts(
+  "solicitacao-kaique", kaique, { uber: "", refeicao: "", outros: "" }, "centro-custo",
+);
+assert(
+  kaiqueCosts.length === 1 && kaiqueCosts[0].valor === 164.67,
+  "Rodon e BP-e da mesma compra nunca podem somar R$ 273,97",
+);
+assert(
+  kaiqueCosts[0].compra_chave === "LOC:1NRM0Q",
+  "custo canônico deve carregar a identidade estrutural da compra",
+);
+
+const multiSegmentPurchase = groupPdfDocumentsByPassagem([
+  { ...kaique[0], id: "voucher-aereo", origem: "Cuiabá/MT", destino: "Juazeiro do Norte/CE" },
+  { ...kaique[1], id: "segmento-1", origem: "Cuiabá/MT", destino: "Guarulhos/SP", partida_em: "2026-08-22T10:00" },
+  { ...kaique[1], id: "segmento-2", origem: "Guarulhos/SP", destino: "Juazeiro do Norte/CE", partida_em: "2026-08-22T13:00" },
+]);
+assert(
+  multiSegmentPurchase.length === 1 && multiSegmentPurchase[0].value === 164.67,
+  "um localizador com vários segmentos e um voucher deve formar uma compra",
+);
+
 const marcosCosts = buildPurchaseCosts(
   "solicitacao-marcos",
   complementaryPair("MARCOS ANTONIO BRASILINO", 71.95, 52.1),

@@ -2,7 +2,7 @@ import {
   classifyDocumentValueSource,
   normalizePassagemKey,
   type DocumentType,
-} from "./pdfPassagemHeuristics";
+} from "./pdfPassagemHeuristics.ts";
 
 export type PassagemDocument = {
   id: string;
@@ -18,6 +18,7 @@ export type PassagemDocument = {
   numero_bilhete?: string;
   tipo_documento?: DocumentType;
   valores_financeiros_divergentes?: boolean;
+  valor_confirmado_manualmente?: boolean;
 };
 
 export type PassagemGroup = {
@@ -28,7 +29,12 @@ export type PassagemGroup = {
   needsReview: boolean;
   documentMismatch: boolean;
   financialDocumentId: string;
-  valueSource: "voucher" | "bilhete_oficial" | "desconhecido" | "nenhum";
+  valueSource:
+    | "voucher"
+    | "bilhete_oficial"
+    | "hospedagem"
+    | "desconhecido"
+    | "nenhum";
   informationalTicketValues: number[];
   valueHierarchyNotice: boolean;
   consolidatedPassenger: string;
@@ -106,6 +112,16 @@ function passageEvidence(left: PassagemDocument, right: PassagemDocument) {
 }
 
 function samePassage(left: PassagemDocument, right: PassagemDocument) {
+  const sharedLocator = normalized(left.localizador) &&
+    normalized(left.localizador) === normalized(right.localizador);
+  const compatiblePassenger = !normalized(left.passageiro) ||
+    !normalized(right.passageiro) ||
+    compatibleText(normalized(left.passageiro), normalized(right.passageiro));
+  // One locator can cover several textual flight segments in the same
+  // commercial purchase. A voucher and its official tickets are evidence of
+  // that purchase even when route/departure fields describe different legs.
+  if (complementaryTypes(left, right) && sharedLocator && compatiblePassenger)
+    return true;
   const evidence = passageEvidence(left, right);
   if (evidence.conflicts) return false;
   return complementaryTypes(left, right)
@@ -199,6 +215,9 @@ export function groupPdfDocumentsByPassagem(
       (item) =>
         classifyDocumentValueSource(item.tipo_documento) === "desconhecido",
     );
+    const lodgingDocuments = validDocuments.filter(
+      (item) => classifyDocumentValueSource(item.tipo_documento) === "hospedagem",
+    );
     const selectedDocuments = voucherDocuments.length
       ? voucherDocuments
       : officialDocuments.length
@@ -224,12 +243,19 @@ export function groupPdfDocumentsByPassagem(
       selectedDocuments.some(
         (document) => document.valores_financeiros_divergentes,
       );
+    const unknownValueNeedsConfirmation =
+      selectedSource === "desconhecido" &&
+      selectedDocuments.some((document) => !document.valor_confirmado_manualmente);
     return {
       key: extractPassagemSignature(group[0]) || `PENDENTE:${index}`,
       documents: group,
       value: selectedValues[0] || 0,
       conflictingValues,
-      needsReview: selectedValues.length === 0 || conflictingValues,
+      needsReview:
+        selectedValues.length === 0 ||
+        conflictingValues ||
+        unknownValueNeedsConfirmation ||
+        lodgingDocuments.length > 0,
       financialDocumentId: selectedDocuments[0]?.id || group[0].id,
       valueSource: selectedSource,
       informationalTicketValues,

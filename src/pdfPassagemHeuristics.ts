@@ -1,16 +1,22 @@
 export type DocumentType =
   | "voucher"
   | "bilhete_embarque"
+  | "hospedagem"
   | "documento_sem_valor"
   | "documento";
 
-export type DocumentValueSource = "voucher" | "bilhete_oficial" | "desconhecido";
+export type DocumentValueSource =
+  | "voucher"
+  | "bilhete_oficial"
+  | "hospedagem"
+  | "desconhecido";
 
 export function classifyDocumentValueSource(
   tipoDocumento?: DocumentType,
 ): DocumentValueSource {
   if (tipoDocumento === "voucher") return "voucher";
   if (tipoDocumento === "bilhete_embarque") return "bilhete_oficial";
+  if (tipoDocumento === "hospedagem") return "hospedagem";
   return "desconhecido";
 }
 
@@ -120,17 +126,43 @@ function extractPassenger(text: string, stops: string[]) {
       normalizePassagemKey(left).split(" ").length)[0] || "";
 }
 
-function extractFinancialValues(text: string, stops: string[]) {
-  const labelled = captures(text, [
-    "Valor\\s+Total", "Valor\\s+por\\s+poltrona",
-    "Valor\\s+da\\s+passagem", "Total\\s+pago", "Total", "Tarifa",
-  ], stops).map(parseMoney).filter(Boolean).map(Number);
+function labelledMoney(text: string, labels: string[], stops: string[]) {
+  return captures(text, labels, stops).map(parseMoney).filter(Boolean).map(Number);
+}
+
+function extractFinancialValues(
+  text: string,
+  stops: string[],
+  officialTicket: boolean,
+) {
+  // Financial labels are semantic tiers, not interchangeable numbers. In
+  // particular, \bTotal\b deliberately cannot match "Subtotal".
+  const payable = labelledMoney(text, [
+    "Valor\\s+a\\s+pagar", "Valor\\s+pago", "Total\\s+pago",
+  ], stops);
+  const explicitTotal = labelledMoney(text, [
+    "Valor\\s+Total", "Total\\s+da\\s+compra", "Total",
+  ], stops);
+  const seatOrTicket = labelledMoney(text, [
+    "Valor\\s+por\\s+poltrona", "Valor\\s+da\\s+passagem",
+  ], stops);
+  const tariff = labelledMoney(text, ["Tarifa"], stops);
   const currency = [...text.matchAll(/R\s*\$\s*\d[\d.\s]*[.,]\s*\d{2}/gi)]
     .map((match) => parseMoney(match[0])).filter(Boolean).map(Number);
-  const candidates = labelled.length ? labelled : currency;
+  const candidates = officialTicket && payable.length
+    ? payable
+    : explicitTotal.length
+      ? explicitTotal
+      : payable.length
+        ? payable
+        : seatOrTicket.length
+          ? seatOrTicket
+          : tariff.length
+            ? tariff
+            : currency;
   const unique = [...new Set(candidates.map((value) => value.toFixed(2)))].map(Number);
   return {
-    value: unique.length ? Math.max(...unique).toFixed(2) : "",
+    value: unique.at(-1)?.toFixed(2) || "",
     divergent: unique.length > 1,
   };
 }
@@ -182,11 +214,17 @@ export function extractTicketDataFromText(
       "Total", "Valor", "Tarifa",
     ];
     const labelled = (labels: string[]) => capture(text, labels, stops);
+    const normalizedContent = normalizePassagemKey(text);
+    const normalizedText = normalizePassagemKey(`${fileName} ${text}`);
+    const hasOfficialTicketTerms =
+      /\b(?:DOCUMENTO AUXILIAR DO BILHETE DE PASSAGEM ELETRONICO|DOCUMENTO AUXILIAR DO BP E|DABPE|BP E|NUMERO DO BILHETE|N BILHETE|VALOR A PAGAR|TARIFA|FORMA PAGAMENTO|ACESSO AO PORTAO DE EMBARQUE|TAXA DE EMBARQUE|PEDAGIO)\b/.test(
+        normalizedText,
+      );
     const partida = parseSeparatedDepartureDateTime(text) || parseDateTime(labelled([
       "Data\\s+e\\s+hora\\s+de\\s+sa[ií]da", "Data\\s+de\\s+partida",
       "Embarque", "Sa[ií]da", "Partida", "Data",
     ])) || parseDateTime(text);
-    const financial = extractFinancialValues(text, stops);
+    const financial = extractFinancialValues(text, stops, hasOfficialTicketTerms);
     const passageiro = extractPassenger(text, stops);
     const documento = labelled(["Documento", "CPF"]).replace(/\D/g, "");
     const fileRoute = extractRouteFromFilename(fileName, passageiro);
@@ -215,18 +253,25 @@ export function extractTicketDataFromText(
     const numeroBilhete = /\d/.test(numeroBilheteCandidate)
       ? numeroBilheteCandidate
       : "";
-    const normalizedText = normalizePassagemKey(`${fileName} ${text}`);
-    const hasOfficialTicketTerms =
-      /\b(?:DOCUMENTO AUXILIAR DO BILHETE DE PASSAGEM ELETRONICO|DOCUMENTO AUXILIAR DO BP E|DABPE|BP E|NUMERO DO BILHETE|N BILHETE|VALOR A PAGAR|TARIFA|FORMA PAGAMENTO|ACESSO AO PORTAO DE EMBARQUE|TAXA DE EMBARQUE|PEDAGIO)\b/.test(
-        normalizedText,
-      );
     const hasVoucherTerms =
       /\b(?:PEDIDO CONCLUIDO|DETALHES DO PAGAMENTO|VALOR TOTAL|VALOR POR POLTRONA|COMPROVANTE|VOUCHER|RODOVIARIAONLINE|QUERO PASSAGEM)\b/.test(
         normalizedText,
       );
+    // Filename is deliberately excluded: classification as lodging requires
+    // evidence in the document content itself.
+    const lodgingSignals = [
+      /\bHOSPEDAGEM\b/.test(normalizedContent),
+      /\bHOTEL\b/.test(normalizedContent),
+      /\bPOUSADA\b/.test(normalizedContent),
+      /\bDIARIAS?\b/.test(normalizedContent),
+      /\bCHECK IN\b|\bCHECK OUT\b/.test(normalizedContent),
+    ].filter(Boolean).length;
+    const isLodgingDocument = lodgingSignals >= 2;
     const hasBoardingTerms =
       /\b(?:QR|EMBARQUE|POLTRONA|ASSENTO|BILHETE)\b/.test(normalizedText);
-    const tipoDocumento: DocumentType = hasOfficialTicketTerms
+    const tipoDocumento: DocumentType = isLodgingDocument
+      ? "hospedagem"
+      : hasOfficialTicketTerms
       ? "bilhete_embarque"
       : hasVoucherTerms || (localizador && financial.value)
         ? "voucher"
