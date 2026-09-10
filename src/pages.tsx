@@ -53,7 +53,8 @@ import { formatCityUf, normalizeNeighborhoodForDisplay, normalizeStreetForDispla
 import { currentCostCenterPrefill } from "./collaboratorCostCenter";
 import { chaveColaboradorCatalogo, resolveSolicitacaoColaborador, solicitacaoCorrespondeAoColaborador, solicitacaoCorrespondeBuscaPessoa } from "./solicitacaoColaborador";
 import { CostCenterCombobox } from "./CostCenterCombobox";
-import { emptyNovaSolicitacaoForm, hasDraftContent, novaSolicitacaoDraftKey, parseDraft, serializeDraft, validateDraftCatalogIds, type NovaSolicitacaoDraftData } from "./novaSolicitacaoDraft";
+import { draftPrivateRef, emptyNovaSolicitacaoForm, hasDraftContent, NOVA_SOLICITACAO_DRAFT_MAX_AGE_MS, novaSolicitacaoDraftKey, parseDraft, serializeDraft, validateDraftCatalogIds, type NovaSolicitacaoDraftData, type NovaSolicitacaoDraftDocument } from "./novaSolicitacaoDraft";
+import { cleanupExpiredDraftPrivate, deleteDraftPrivate, readDraftPrivate, removeDraftDocument, saveDraftDocument, saveDraftPix } from "./novaSolicitacaoDraftPrivate";
 import { COMPRA_HORARIO_ALERTA, horarioLocalDaPartida, partidaAnteriorAoSolicitado } from "./passagemOperationalRules";
 import { HOSPEDAGEM_ATTACHMENT_TYPE, isHospedagemAttachment, parseHospedagemValor } from "./hospedagemOperationalRules";
 import { resolveUserLabel } from "./userLabelResolution";
@@ -1030,6 +1031,7 @@ export function NovaSolicitacao({ userId, access }: { userId: string; access: Ac
   const [diasNaoUteis, setDiasNaoUteis] = useState<Array<{data:string;ativo:boolean}>>([]);
   const [anosCalendario, setAnosCalendario] = useState<Array<{ano:number;completo:boolean}>>([]);
   const [documento, setDocumento] = useState<File | null>(null);
+  const [documentoDraft, setDocumentoDraft] = useState<NovaSolicitacaoDraftDocument | null>(null);
   const [cicloFolga,setCicloFolga]=useState<CicloFolga|null>(null);
   const [cicloLoading,setCicloLoading]=useState(false);
   const [destinoResidencial,setDestinoResidencial]=useState<{possui_endereco:boolean;cidade:string|null;uf:string|null}|null>(null);
@@ -1037,7 +1039,12 @@ export function NovaSolicitacao({ userId, access }: { userId: string; access: Ac
   const [justificativaDestino,setJustificativaDestino]=useState("");
   const [form, setForm] = useState(emptyNovaSolicitacaoForm);
   const [draftReady, setDraftReady] = useState(false);
+  const [privateReady, setPrivateReady] = useState(false);
+  const [privateRef, setPrivateRef] = useState<string>(() => crypto.randomUUID());
   const restoredDraftRef = useRef(false);
+  const draftPixRestoredRef = useRef(false);
+  const discardDraftRef = useRef(false);
+  const latestDraftRef = useRef<NovaSolicitacaoDraftData | null>(null);
   const pixEditadoRef = useRef(false);
   const pixRequestRef = useRef(0);
   const draftKey = novaSolicitacaoDraftKey(userId);
@@ -1061,34 +1068,67 @@ export function NovaSolicitacao({ userId, access }: { userId: string; access: Ac
   }, [userId]);
   useEffect(() => {
     if (!catalogosReady || draftReady) return;
-    const isRecreating = Boolean((location.state as { refazer?: string } | null)?.refazer);
-    if (!isRecreating) {
-      const parsed = parseDraft(localStorage.getItem(draftKey));
-      if (parsed) {
-        const restored = validateDraftCatalogIds(parsed, new Set(funcionarios.map(({ id }) => id)), new Set(obras.map(({ id }) => id)));
-        if (restored.form.motivo && !motivosPermitidos(access.role, access.isRh).includes(restored.form.motivo)) {
-          restored.form.motivo = "";
-          restored.form.desligamento_subtipo = "";
+    let active = true;
+    void (async () => {
+      const raw = localStorage.getItem(draftKey);
+      const parsed = parseDraft(raw);
+      const isRecreating = Boolean((location.state as { refazer?: string } | null)?.refazer);
+      void cleanupExpiredDraftPrivate(NOVA_SOLICITACAO_DRAFT_MAX_AGE_MS).catch(() => undefined);
+      if (!parsed && draftPrivateRef(raw)) void deleteDraftPrivate(draftPrivateRef(raw)!).catch(() => undefined);
+      if (!isRecreating && parsed) {
+        const ref = parsed.privateRef || crypto.randomUUID();
+        setPrivateRef(ref);
+        if (parsed) {
+          const restored = validateDraftCatalogIds(parsed, new Set(funcionarios.map(({ id }) => id)), new Set(obras.map(({ id }) => id)));
+          if (restored.form.motivo && !motivosPermitidos(access.role, access.isRh).includes(restored.form.motivo)) {
+            restored.form.motivo = "";
+            restored.form.desligamento_subtipo = "";
+          }
+          if (restored.form.funcionario_id && !restored.form.obra_id) restored.form.obra_id = currentCostCenterPrefill(funcionarios.find(({ id }) => id === restored.form.funcionario_id));
+          const privateData = parsed.privateRef ? await readDraftPrivate(ref, userId).catch(() => null) : null;
+          if (!active) return;
+          if (privateData?.pix) {
+            restored.form.pix_viajante = privateData.pix;
+            draftPixRestoredRef.current = true;
+            pixEditadoRef.current = true;
+          }
+          if (privateData?.documento && parsed.documento) {
+            setDocumento(new File([privateData.documento], parsed.documento.nome, { type: parsed.documento.mime }));
+            setDocumentoDraft(parsed.documento);
+          }
+          restoredDraftRef.current = true;
+          setForm(restored.form);
+          setSolicitarExcecao(restored.solicitarExcecao);
+          setDestinoDiferente(restored.destinoDiferente);
+          setJustificativaDestino(restored.justificativaDestino);
         }
-        if (restored.form.funcionario_id && !restored.form.obra_id) restored.form.obra_id = currentCostCenterPrefill(funcionarios.find(({ id }) => id === restored.form.funcionario_id));
-        restoredDraftRef.current = true;
-        setForm(restored.form);
-        setSolicitarExcecao(restored.solicitarExcecao);
-        setDestinoDiferente(restored.destinoDiferente);
-        setJustificativaDestino(restored.justificativaDestino);
       }
-    }
-    setDraftReady(true);
-  }, [access.isRh, access.role, catalogosReady, draftKey, draftReady, funcionarios, location.state, obras]);
+      if (active) { setPrivateReady(true); setDraftReady(true); }
+    })();
+    return () => { active = false; };
+  }, [access.isRh, access.role, catalogosReady, draftKey, draftReady, funcionarios, location.state, obras, userId]);
+  const currentDraft: NovaSolicitacaoDraftData = { form, solicitarExcecao, destinoDiferente, justificativaDestino, privateRef, documento: documentoDraft };
+  latestDraftRef.current = currentDraft;
   useEffect(() => {
     if (!draftReady) return;
-    const draft: NovaSolicitacaoDraftData = { form, solicitarExcecao, destinoDiferente, justificativaDestino };
+    const draft: NovaSolicitacaoDraftData = { form, solicitarExcecao, destinoDiferente, justificativaDestino, privateRef, documento: documentoDraft };
     const timer = window.setTimeout(() => {
-      if (hasDraftContent(draft)) localStorage.setItem(draftKey, serializeDraft(draft));
+      if (hasDraftContent(draft) || documentoDraft) localStorage.setItem(draftKey, serializeDraft(draft));
       else localStorage.removeItem(draftKey);
     }, 400);
     return () => window.clearTimeout(timer);
-  }, [destinoDiferente, draftKey, draftReady, form, justificativaDestino, solicitarExcecao]);
+  }, [destinoDiferente, documentoDraft, draftKey, draftReady, form, justificativaDestino, privateRef, solicitarExcecao]);
+  useEffect(() => () => {
+    if (discardDraftRef.current) return;
+    const latest = latestDraftRef.current;
+    if (latest && (hasDraftContent(latest) || latest.documento)) localStorage.setItem(draftKey, serializeDraft(latest));
+  }, [draftKey]);
+  function persistDraftNow(nextForm = form, nextDocument = documentoDraft) {
+    const draft: NovaSolicitacaoDraftData = { form: nextForm, solicitarExcecao, destinoDiferente, justificativaDestino, privateRef, documento: nextDocument };
+    latestDraftRef.current = draft;
+    if (hasDraftContent(draft) || nextDocument) localStorage.setItem(draftKey, serializeDraft(draft));
+    else localStorage.removeItem(draftKey);
+  }
   useEffect(()=>{
     const origem=(location.state as {refazer?:string}|null)?.refazer;
     if(!origem)return;
@@ -1128,6 +1168,7 @@ export function NovaSolicitacao({ userId, access }: { userId: string; access: Ac
   const dataMinimaInput = dataMinimaDoInput(idaMinima, hojeLocal, podeExcepcionarPrazo, permiteExcecaoPrazo && solicitarExcecao);
   const funcionarioSelecionado = funcionarios.find((x) => x.id === form.funcionario_id);
   useEffect(() => {
+    if (!privateReady || draftPixRestoredRef.current) return;
     const selected = funcionarios.find((x) => x.id === form.funcionario_id);
     if (!selected) return;
     const requestId = ++pixRequestRef.current;
@@ -1136,7 +1177,7 @@ export function NovaSolicitacao({ userId, access }: { userId: string; access: Ac
       if (requestId !== pixRequestRef.current || pixEditadoRef.current) return;
       setForm((atual) => atual.pix_viajante ? atual : { ...atual, pix_viajante: typeof ultimoPix === "string" ? ultimoPix : "" });
     });
-  }, [form.funcionario_id, funcionarios]);
+  }, [form.funcionario_id, funcionarios, privateReady]);
   const foraPrazo =
     Boolean(form.data_ida) && form.data_ida < idaMinima;
   const folgaAntecipada=form.motivo==="folga_campo"&&dataAntecipaCiclo(form.data_ida,cicloFolga?.proxima_folga_prevista);
@@ -1156,6 +1197,8 @@ export function NovaSolicitacao({ userId, access }: { userId: string; access: Ac
   function pickFuncionario(id: string) {
     restoredDraftRef.current = false;
     pixEditadoRef.current = false;
+    draftPixRestoredRef.current = false;
+    void saveDraftPix(privateRef, userId, "").catch(() => undefined);
     const f = funcionarios.find((x) => x.id === id);
     setForm({
       ...form,
@@ -1180,6 +1223,40 @@ export function NovaSolicitacao({ userId, access }: { userId: string; access: Ac
         motivo === "transferencia_obra" ? form.centro_custo_destino_id : "",
     }));
   }
+  async function removerDocumentoDraft() {
+    setDocumento(null);
+    setDocumentoDraft(null);
+    await removeDraftDocument(privateRef, userId).catch(() => undefined);
+    persistDraftNow(form, null);
+  }
+  async function selecionarDocumento(file: File | null) {
+    if (!file) { await removerDocumentoDraft(); return; }
+    const validacao = validatePdfFile(file) || await validatePdfSignature(file);
+    if (validacao) { setErro(validacao); return; }
+    const categoria = categoriaDocumento(form.desligamento_subtipo || null);
+    if (!categoria) return;
+    try {
+      await saveDraftDocument(privateRef, userId, file);
+      const metadata = { nome: file.name, tamanho: file.size, mime: file.type || "application/pdf", categoria };
+      setDocumento(file);
+      setDocumentoDraft(metadata);
+      persistDraftNow(form, metadata);
+      setErro("");
+    } catch { setErro("Não foi possível preservar o documento neste navegador."); }
+  }
+  useEffect(() => {
+    if (!privateReady || !documentoDraft) return;
+    const categoriaAtual = categoriaDocumento(form.desligamento_subtipo || null);
+    if (categoriaAtual !== documentoDraft.categoria) {
+      setDocumento(null);
+      setDocumentoDraft(null);
+      const draft = { form, solicitarExcecao, destinoDiferente, justificativaDestino, privateRef, documento: null };
+      latestDraftRef.current = draft;
+      if (hasDraftContent(draft)) localStorage.setItem(draftKey, serializeDraft(draft));
+      else localStorage.removeItem(draftKey);
+      void removeDraftDocument(privateRef, userId).catch(() => undefined);
+    }
+  }, [destinoDiferente, documentoDraft, draftKey, form, justificativaDestino, privateReady, privateRef, solicitarExcecao, userId]);
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     setErro("");
@@ -1234,13 +1311,17 @@ export function NovaSolicitacao({ userId, access }: { userId: string; access: Ac
       setBusy(false);
       return;
     }
+    discardDraftRef.current = true;
     localStorage.removeItem(draftKey);
+    await deleteDraftPrivate(privateRef).catch(() => undefined);
     nav(`/solicitacoes/${created}`);
   }
-  function cancel() {
-    const draft: NovaSolicitacaoDraftData = { form, solicitarExcecao, destinoDiferente, justificativaDestino };
-    if (hasDraftContent(draft) && !window.confirm("Descartar rascunho?\nAs informações preenchidas nesta solicitação serão apagadas.")) return;
+  async function cancel() {
+    const draft = currentDraft;
+    if ((hasDraftContent(draft) || documentoDraft) && !window.confirm("Descartar rascunho?\nAs informações preenchidas nesta solicitação serão apagadas.")) return;
+    discardDraftRef.current = true;
     localStorage.removeItem(draftKey);
+    await deleteDraftPrivate(privateRef).catch(() => undefined);
     nav("/solicitacoes");
   }
   return (
@@ -1333,10 +1414,10 @@ export function NovaSolicitacao({ userId, access }: { userId: string; access: Ac
               ))}
           </select>
         </label>
-        {form.motivo === "desligamento" && <label>Tipo de desligamento *<select required value={form.desligamento_subtipo} onChange={(e)=>{setForm({...form,desligamento_subtipo:e.target.value as DesligamentoSubtipo});setDocumento(null);}}><option value="">Selecione</option><option value="programado_outros">Desligamento programado / outros</option><option value="justa_causa">Justa causa</option><option value="pedido_demissao">Pedido de demissão</option><option value="ma_conduta">Má conduta</option></select></label>}
+        {form.motivo === "desligamento" && <label>Tipo de desligamento *<select required value={form.desligamento_subtipo} onChange={(e)=>setForm({...form,desligamento_subtipo:e.target.value as DesligamentoSubtipo})}><option value="">Selecione</option><option value="programado_outros">Desligamento programado / outros</option><option value="justa_causa">Justa causa</option><option value="pedido_demissao">Pedido de demissão</option><option value="ma_conduta">Má conduta</option></select></label>}
         <section className="wide operational-fields">
           <h3>Informações operacionais</h3>
-          <label>Chave PIX do viajante *<input required value={form.pix_viajante} onChange={(e)=>{pixEditadoRef.current=true;setForm({...form,pix_viajante:e.target.value})}} autoComplete="off" /></label>
+          <label>Chave PIX do viajante *<input required value={form.pix_viajante} onChange={(e)=>{const pix=e.target.value;const nextForm={...form,pix_viajante:pix};pixEditadoRef.current=true;draftPixRestoredRef.current=true;setForm(nextForm);persistDraftNow(nextForm);void saveDraftPix(privateRef,userId,pix).catch(()=>setErro("Não foi possível preservar o PIX neste navegador."));}} autoComplete="off" /></label>
           <label>Necessita hospedagem?<select value={form.necessita_hospedagem ? "sim" : "nao"} onChange={(e)=>{const sim=e.target.value==="sim";setForm({...form,necessita_hospedagem:sim,hospedagem_checkin:sim?form.hospedagem_checkin:"",hospedagem_checkout:sim?form.hospedagem_checkout:""})}}><option value="nao">Não</option><option value="sim">Sim</option></select></label>
           {form.necessita_hospedagem&&<><label>Check-in *<input type="date" required value={form.hospedagem_checkin} onChange={(e)=>setForm({...form,hospedagem_checkin:e.target.value})}/></label><label>Check-out *<input type="date" required min={form.hospedagem_checkin||undefined} value={form.hospedagem_checkout} onChange={(e)=>setForm({...form,hospedagem_checkout:e.target.value})}/></label></>}
           <label>Ida a partir do horário<input type="time" value={form.ida_a_partir_horario} onChange={(e)=>setForm({...form,ida_a_partir_horario:e.target.value})}/></label>
@@ -1355,7 +1436,7 @@ export function NovaSolicitacao({ userId, access }: { userId: string; access: Ac
           {dataPrazoErro && <small className="error">Selecione uma data que atenda à antecedência mínima.</small>}
         </label>
         {folgaAntecipada&&<label className="wide">Justificativa da antecipação *<textarea required minLength={10} rows={3} value={form.folga_antecipacao_justificativa} onChange={(e)=>setForm({...form,folga_antecipacao_justificativa:e.target.value})}/><small>Esta data antecipa o ciclo previsto da folga de campo. A equipe RO deverá aprovar a antecipação antes da compra da passagem.</small></label>}
-        {categoriaDocumento(form.desligamento_subtipo || null) && <label className="wide">Documento interno obrigatório — {form.desligamento_subtipo === "justa_causa" ? "Termo de justa causa" : "Carta de pedido de demissão"}<input type="file" accept="application/pdf,.pdf" required onChange={(e)=>setDocumento(e.target.files?.[0] || null)}/><small>Somente PDF, até 10 MB. Acesso interno restrito.</small></label>}
+        {categoriaDocumento(form.desligamento_subtipo || null) && <label className="wide">Documento interno obrigatório — {form.desligamento_subtipo === "justa_causa" ? "Termo de justa causa" : "Carta de pedido de demissão"}<input type="file" accept="application/pdf,.pdf" required={!documento} onChange={(e)=>void selecionarDocumento(e.target.files?.[0] || null)}/>{documentoDraft&&<span className="draft-document"><FileText size={16}/><strong>{documentoDraft.nome}</strong><small>{(documentoDraft.tamanho/1024/1024).toFixed(2)} MB — documento preservado no rascunho</small><button type="button" className="btn secondary" onClick={()=>void removerDocumentoDraft()}>Remover anexo</button></span>}<small>Somente PDF, até 10 MB. Acesso interno restrito.</small></label>}
         {motivoPossuiRetorno(form.motivo) && (
           <>
             <label>

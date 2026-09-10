@@ -49,3 +49,23 @@ test("detecta conteúdo inclusive nos campos condicionais", () => {
   assert.equal(hasDraftContent(data()), false);
   assert.equal(hasDraftContent({ ...data(), justificativaDestino: "necessário" }), true);
 });
+
+test("versão 2 mantém somente referência e metadados mínimos do documento", () => {
+  const draft = { ...data(), privateRef: "ref-opaca", documento: { nome: "termo.pdf", tamanho: 123, mime: "application/pdf", categoria: "termo_justa_causa" } };
+  const raw = serializeDraft(draft);
+  assert.doesNotMatch(raw, /%PDF|arrayBuffer|conteudo/);
+  const restored = parseDraft(raw)!;
+  assert.equal(restored.privateRef, "ref-opaca");
+  assert.deepEqual(restored.documento, draft.documento);
+});
+
+test("rascunho versão 1 continua compatível sem inventar dados privados", () => {
+  const legacy = JSON.parse(serializeDraft(data())) as Record<string, unknown>;
+  legacy.version = 1;
+  delete legacy.privateRef;
+  delete legacy.documento;
+  const restored = parseDraft(JSON.stringify(legacy))!;
+  assert.equal(restored.privateRef, undefined);
+  assert.equal(restored.documento, null);
+  assert.equal(restored.form.pix_viajante, "");
+});

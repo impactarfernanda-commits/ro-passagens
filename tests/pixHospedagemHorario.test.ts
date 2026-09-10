@@ -14,12 +14,25 @@ test("compara o relógio local sem inventar timezone", () => {
   assert.equal(COMPRA_HORARIO_ALERTA, "Horário anterior ao solicitado. Confirmar mesmo assim?");
 });
 
-test("PIX nunca é serializado no rascunho persistente", () => {
+test("PIX não é serializado no rascunho textual", () => {
   const form = { ...emptyNovaSolicitacaoForm(), pix_viajante: "pix-secreto", origem: "Porto Velho / RO" };
   const raw = serializeDraft({ form, solicitarExcecao:false, destinoDiferente:false, justificativaDestino:"" });
   assert.doesNotMatch(raw, /pix-secreto/);
   assert.equal(parseDraft(raw)?.form.pix_viajante, "");
   assert.equal(parseDraft(raw)?.form.origem, "Porto Velho / RO");
+});
+
+test("PIX privado é restaurado antes do fallback histórico", () => {
+  const page = fs.readFileSync("src/pages.tsx", "utf8");
+  assert.match(page, /privateData\?\.pix[\s\S]*draftPixRestoredRef\.current = true/);
+  assert.match(page, /if \(!privateReady \|\| draftPixRestoredRef\.current\) return;/);
+  assert.match(page, /ro_ultimo_pix_viajante/);
+});
+
+test("sucesso e cancelamento limpam o registro privado", () => {
+  const page = fs.readFileSync("src/pages.tsx", "utf8");
+  assert.ok((page.match(/deleteDraftPrivate\(privateRef\)/g) || []).length >= 2);
+  assert.match(page, /if \(error\)[\s\S]*setBusy\(false\);[\s\S]*return;[\s\S]*deleteDraftPrivate\(privateRef\)/);
 });
 
 test("migration usa identidades explícitas e permissões mínimas", () => {

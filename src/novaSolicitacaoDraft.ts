@@ -1,6 +1,6 @@
 import type { DesligamentoSubtipo, Motivo } from "./types";
 
-export const NOVA_SOLICITACAO_DRAFT_VERSION = 1;
+export const NOVA_SOLICITACAO_DRAFT_VERSION = 2;
 export const NOVA_SOLICITACAO_DRAFT_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 
 export type NovaSolicitacaoForm = {
@@ -33,6 +33,15 @@ export type NovaSolicitacaoDraftData = {
   solicitarExcecao: boolean;
   destinoDiferente: boolean;
   justificativaDestino: string;
+  privateRef?: string;
+  documento?: NovaSolicitacaoDraftDocument | null;
+};
+
+export type NovaSolicitacaoDraftDocument = {
+  nome: string;
+  tamanho: number;
+  mime: string;
+  categoria: string;
 };
 
 type StoredDraft = NovaSolicitacaoDraftData & { version: number; updatedAt: string };
@@ -66,7 +75,7 @@ export function parseDraft(raw: string | null, now = Date.now()): StoredDraft | 
   try {
     const value = JSON.parse(raw) as Partial<StoredDraft>;
     const updatedAt = Date.parse(value.updatedAt || "");
-    if (value.version !== NOVA_SOLICITACAO_DRAFT_VERSION || !value.form ||
+    if (![1, NOVA_SOLICITACAO_DRAFT_VERSION].includes(value.version || 0) || !value.form ||
       !Number.isFinite(updatedAt) || now - updatedAt > NOVA_SOLICITACAO_DRAFT_MAX_AGE_MS) return null;
     const base = emptyNovaSolicitacaoForm();
     const form = Object.fromEntries(Object.entries(base).map(([key, fallback]) => {
@@ -75,11 +84,28 @@ export function parseDraft(raw: string | null, now = Date.now()): StoredDraft | 
       return [key, typeof candidate === typeof fallback ? candidate : fallback];
     })) as NovaSolicitacaoForm;
     return {
-      form, version: value.version, updatedAt: value.updatedAt!,
+      form, version: NOVA_SOLICITACAO_DRAFT_VERSION, updatedAt: value.updatedAt!,
       solicitarExcecao: value.solicitarExcecao === true,
       destinoDiferente: value.destinoDiferente === true,
       justificativaDestino: typeof value.justificativaDestino === "string" ? value.justificativaDestino : "",
+      privateRef: typeof value.privateRef === "string" ? value.privateRef : undefined,
+      documento: isDraftDocument(value.documento) ? value.documento : null,
     };
+  } catch { return null; }
+}
+
+function isDraftDocument(value: unknown): value is NovaSolicitacaoDraftDocument {
+  if (!value || typeof value !== "object") return false;
+  const doc = value as Record<string, unknown>;
+  return typeof doc.nome === "string" && typeof doc.tamanho === "number" &&
+    typeof doc.mime === "string" && typeof doc.categoria === "string";
+}
+
+export function draftPrivateRef(raw: string | null) {
+  if (!raw) return null;
+  try {
+    const value = JSON.parse(raw) as { privateRef?: unknown };
+    return typeof value.privateRef === "string" ? value.privateRef : null;
   } catch { return null; }
 }
 
