@@ -49,10 +49,22 @@ test("pendente mantém ações visíveis, desabilitadas e identifica o aprovador
   assert.match(page, /className="btn primary" disabled>Assumir solicitação/);
 });
 
-test("reprovada mantém ações desabilitadas e motivo visível", () => {
+test("pendência do coordenador exige status operacional solicitado", () => {
+  assert.match(page, /q\.eq\("aprovacao_status", "pendente"\)\.eq\("status", "solicitada"\)/);
+  assert.match(page, /const aprovacaoPendenteAtiva = row\.status === "solicitada" && row\.aprovacao_status === "pendente"/);
+  assert.match(page, /row\.status === "solicitada" && row\.aprovador_id === userId && row\.aprovacao_status === "pendente"/);
+});
+
+test("recusa operacional não parece continuar aguardando aprovação", () => {
+  assert.match(page, /Interrompida por recusa RO/);
+  assert.match(page, /Solicitação encerrada por recusa operacional\./);
+  assert.match(page, /\{aprovacaoPendenteAtiva && <DT t="Tempo aguardando"/);
+});
+
+test("reprovada mantém ações operacionais desabilitadas e motivo visível", () => {
   assert.match(page, /Solicitação reprovada na etapa de aprovação\./);
   assert.match(page, /Motivo: \{row\.motivo_reprovacao_aprovador\}/);
-  assert.match(page, /className="btn danger" disabled>Recusar solicitação/);
+  assert.match(page, /row\.aprovacao_status !== "reprovada"/);
   assert.match(page, /disabled>Lançar passagem complementar/);
 });
 
@@ -73,7 +85,7 @@ test("backend mantém bloqueio direto e decisão exclusiva do aprovador", () => 
 });
 
 test("RO e outro coordenador não recebem poder de aprovação pela UX", () => {
-  assert.match(page, /row\.aprovador_id === userId && row\.aprovacao_status === "pendente"/);
+  assert.match(page, /row\.status === "solicitada" && row\.aprovador_id === userId && row\.aprovacao_status === "pendente"/);
   assert.doesNotMatch(page, /access\.(?:canOperateRO|canViewAll)[^\n]*<AprovacaoIndividual/);
 });
 

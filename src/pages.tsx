@@ -47,7 +47,7 @@ import { supabase } from "./supabase";
 import { isRateLimitError, PASSWORD_MIN_LENGTH, PASSWORD_RECOVERY_MESSAGE, PASSWORD_RECOVERY_REDIRECT } from "./auth";
 import { calcularDataMinima, canExcepcionarPrazo, categoriaDocumento, dataMinimaDoInput, limparDataIdaInvalida, mensagemAntecedencia, motivoAoSelecionarFuncionario, motivoPermiteExcecaoPrazo, motivosPermitidos, regraPrazo } from "./passagemRules";
 import { motivoPrefillPermitido, motivoRecusaValido, podeRecusarSolicitacao, statusContaComoAberto } from "./recusaRules";
-import { compraFolgaLiberada, dataAntecipaCiclo, folgaFuturaBloqueia, justificativaAntecipacaoValida, SEM_HISTORICO_FOLGA, type CicloFolga } from "./folgaCampoRules";
+import { compraFolgaLiberada, dataAntecipaCiclo, estadoEfetivoFolga, folgaFuturaBloqueia, justificativaAntecipacaoValida, SEM_HISTORICO_FOLGA, type CicloFolga } from "./folgaCampoRules";
 import { motivoPossuiRetorno, normalizarCamposRetorno } from "./retornoRules";
 import { formatCityUf, normalizeNeighborhoodForDisplay, normalizeStreetForDisplay, parseCityUf } from "./collaboratorDisplay";
 import { currentCostCenterPrefill } from "./collaboratorCostCenter";
@@ -61,6 +61,7 @@ import { resolveUserLabel } from "./userLabelResolution";
 import { isEditableOperationalCost, isPassageCost, parseOperationalCostValue } from "./operationalCostRules";
 import { approvalStatusLabel, approvalWaitingLabel, isApprovalOperationallyReleased, matchesApprovalFilter, type ApprovalFilter } from "./approvalVisibility";
 import { approvalDecisionErrorMessage } from "./approvalErrorMessages";
+import { dispensaAprovacaoDesligamentoUrgente } from "./approvalRules";
 import { canShowSolicitacaoDeletion, deletionErrorMessage, normalizeDeletionReason } from "./solicitacaoDeletion";
 import { autoMapHeaders, buildCollaboratorSuggestions, canKeepAsExternal, duplicateCpfRows, formatCpf, formatPhone, isSpreadsheetRows, isValidCpf, matchCollaborator, MAX_RH_XLSX_BYTES, normalizeCpf, normalizePhone, parseBirthDate, possibleMatches, resolveCollaboratorSuggestion, strongAuxiliaryMatches, validUf, type AddressField, type CollaboratorSuggestion, type ColumnMapping, type SpreadsheetRows } from "./addressImport";
 import type {
@@ -756,7 +757,7 @@ export function Solicitacoes({
     if (approvalsOnly) {
       q = q.eq("aprovador_id", userId);
       q = approvalView === "pending"
-        ? q.eq("aprovacao_status", "pendente")
+        ? q.eq("aprovacao_status", "pendente").eq("status", "solicitada")
         : q.in("aprovacao_status", ["aprovada", "reprovada"]);
     }
     const { data } = await q;
@@ -951,8 +952,9 @@ export function Solicitacoes({
             <tbody>
               {shown.map((r) => {
                 const roId = responsavelId(r);
+                const aprovacaoPendenteAtiva = r.status === "solicitada" && r.aprovacao_status === "pendente";
                 return (
-                  <tr key={r.id} className={r.aprovacao_status === "pendente" ? "approval-awaiting" : undefined}>
+                  <tr key={r.id} className={aprovacaoPendenteAtiva ? "approval-awaiting" : undefined}>
                     <td>
                       <strong>{resolveSolicitacaoColaborador(r)?.nome || "—"}</strong>
                       <small>{formatCentroCustoLabel(r.obra) || "Sem obra"}</small>
@@ -982,10 +984,10 @@ export function Solicitacoes({
                     {(access.canViewAll || approvalsOnly) && (
                       <td>
                         <span className={`badge approval-${r.aprovacao_status || "dispensada"}`}>
-                          {r.aprovacao_status === "pendente" ? "Aguardando aprovação" : approvalStatusLabel(r.aprovacao_status)}
+                          {aprovacaoPendenteAtiva ? "Aguardando aprovação" : r.status === "recusada" ? "Interrompida por recusa RO" : approvalStatusLabel(r.aprovacao_status)}
                         </span>
-                        {r.aprovacao_status === "pendente" && <small>{approvalWaitingLabel(r.created_at)}</small>}
-                        {r.aprovador_id && <small>{r.aprovacao_status === "pendente" ? "Aguardando aprovação de " : "Aprovador: "}{userLabels[r.aprovador_id] || "Aprovador sem identificação"}</small>}
+                        {aprovacaoPendenteAtiva && <small>{approvalWaitingLabel(r.created_at)}</small>}
+                        {r.aprovador_id && <small>{aprovacaoPendenteAtiva ? "Aguardando aprovação de " : "Aprovador: "}{userLabels[r.aprovador_id] || "Aprovador sem identificação"}</small>}
                       </td>
                     )}
                     <td>
@@ -1167,6 +1169,12 @@ export function NovaSolicitacao({ userId, access }: { userId: string; access: Ac
   const permiteExcecaoPrazo = motivoPermiteExcecaoPrazo(form.motivo || null, form.desligamento_subtipo || null);
   const dataMinimaInput = dataMinimaDoInput(idaMinima, hojeLocal, podeExcepcionarPrazo, permiteExcecaoPrazo && solicitarExcecao);
   const funcionarioSelecionado = funcionarios.find((x) => x.id === form.funcionario_id);
+  const dispensaAprovacaoUrgente = dispensaAprovacaoDesligamentoUrgente(form.motivo, form.desligamento_subtipo);
+  const dispensaAprovacao = access.isRh || access.isRO || access.isAdmin || dispensaAprovacaoUrgente;
+  useEffect(() => {
+    if (!dispensaAprovacaoUrgente) return;
+    setForm((atual) => atual.aprovador_id ? { ...atual, aprovador_id: "" } : atual);
+  }, [dispensaAprovacaoUrgente]);
   useEffect(() => {
     if (!privateReady || draftPixRestoredRef.current) return;
     const selected = funcionarios.find((x) => x.id === form.funcionario_id);
@@ -1264,7 +1272,6 @@ export function NovaSolicitacao({ userId, access }: { userId: string; access: Ac
       setErro("Selecione o centro de custo atual.");
       return;
     }
-    const dispensaAprovacao = access.isRh || access.isRO || access.isAdmin;
     if (!dispensaAprovacao && !form.aprovador_id) { setErro("Selecione o aprovador da solicitação."); return; }
     if (!form.pix_viajante.trim()) { setErro("Informe a chave PIX do próprio viajante."); return; }
     if (form.necessita_hospedagem && (!form.hospedagem_checkin || !form.hospedagem_checkout)) { setErro("Informe Check-in e Check-out da hospedagem."); return; }
@@ -1301,7 +1308,7 @@ export function NovaSolicitacao({ userId, access }: { userId: string; access: Ac
       if(up.error){setErro("Não foi possível enviar o documento interno.");setBusy(false);return;}
       documentos.push({categoria,storage_path:uploadedPath,arquivo_nome:documento.name,tamanho_bytes:documento.size});
     }
-    const payload=normalizarCamposRetorno({...form,id,colaborador_id:funcionarioSelecionado?.funcionario_id===funcionarioSelecionado?.id?null:funcionarioSelecionado?.id,funcionario_id:funcionarioSelecionado?.funcionario_id||null,solicitar_excecao_prazo:podeExcepcionarPrazo&&permiteExcecaoPrazo&&solicitarExcecao,usar_destino_excepcional:motivoResidencial&&destinoDiferente,destino_residencial_justificativa:justificativaDestino});
+    const payload=normalizarCamposRetorno({...form,aprovador_id:dispensaAprovacao?"":form.aprovador_id,id,colaborador_id:funcionarioSelecionado?.funcionario_id===funcionarioSelecionado?.id?null:funcionarioSelecionado?.id,funcionario_id:funcionarioSelecionado?.funcionario_id||null,solicitar_excecao_prazo:podeExcepcionarPrazo&&permiteExcecaoPrazo&&solicitarExcecao,usar_destino_excepcional:motivoResidencial&&destinoDiferente,destino_residencial_justificativa:justificativaDestino});
     const { data: created, error } = await supabase.rpc("ro_criar_solicitacao_com_aprovador", { p_solicitacao:payload, p_documentos:documentos });
     if (error) {
       if(uploadedPath) await supabase.storage.from("ro-documentos-internos").remove([uploadedPath]);
@@ -1350,7 +1357,7 @@ export function NovaSolicitacao({ userId, access }: { userId: string; access: Ac
             ))}
           </select>
         </label>
-        {!(access.isRh || access.isRO || access.isAdmin) && <label>Aprovador *<select required value={form.aprovador_id} onChange={(e)=>setForm({...form,aprovador_id:e.target.value})}><option value="">Selecione</option>{aprovadores.map((a)=><option key={a.id} value={a.id}>{a.label}</option>)}</select><small>Somente este aprovador poderá analisar a solicitação.</small></label>}
+        {!dispensaAprovacao && <label>Aprovador *<select required value={form.aprovador_id} onChange={(e)=>setForm({...form,aprovador_id:e.target.value})}><option value="">Selecione</option>{aprovadores.map((a)=><option key={a.id} value={a.id}>{a.label}</option>)}</select><small>Somente este aprovador poderá analisar a solicitação.</small></label>}
         <label>
           Centro de custo atual *
           <CostCenterCombobox required options={obras} value={form.obra_id}
@@ -1423,7 +1430,7 @@ export function NovaSolicitacao({ userId, access }: { userId: string; access: Ac
           <label>Ida a partir do horário<input type="time" value={form.ida_a_partir_horario} onChange={(e)=>setForm({...form,ida_a_partir_horario:e.target.value})}/></label>
         </section>
         {mensagemAntecedencia(form.motivo || null, form.desligamento_subtipo || null) && <div className="alert wide">{mensagemAntecedencia(form.motivo || null, form.desligamento_subtipo || null)}</div>}
-        {form.motivo==="folga_campo"&&form.funcionario_id&&<section className="alert wide cycle-info">{cicloLoading?<span>Consultando ciclo...</span>:cicloFolga?.possui_historico?<><strong>Última folga de campo: {data(cicloFolga.ultima_folga_realizada)}</strong><span>Próxima folga prevista: {data(cicloFolga.proxima_folga_prevista)}</span><span>Data recomendada para solicitar: {data(cicloFolga.data_limite_recomendada)}</span></>:<span>{SEM_HISTORICO_FOLGA}</span>}{cicloFolga?.solicitacao_futura_existente_id&&<strong>Já existe uma solicitação de folga de campo para este funcionário em {data(cicloFolga.solicitacao_futura_data)}. Status: {statusLabel[cicloFolga.solicitacao_futura_status as Status]||cicloFolga.solicitacao_futura_status}.</strong>}</section>}
+        {form.motivo==="folga_campo"&&form.funcionario_id&&<section className="alert wide cycle-info">{cicloLoading?<span>Consultando ciclo...</span>:cicloFolga?.possui_historico?<><strong>Última folga de campo: {data(cicloFolga.ultima_folga_realizada)}</strong><span>Próxima folga prevista: {data(cicloFolga.proxima_folga_prevista)}</span><span>Data recomendada para solicitar: {data(cicloFolga.data_limite_recomendada)}</span></>:<span>{SEM_HISTORICO_FOLGA}</span>}{cicloFolga?.solicitacao_futura_existente_id&&<strong>Já existe uma solicitação de folga de campo para este funcionário em {data(cicloFolga.solicitacao_futura_data)}. Status: {estadoEfetivoFolga(cicloFolga)||statusLabel[cicloFolga.solicitacao_futura_status as Status]||cicloFolga.solicitacao_futura_status}.</strong>}</section>}
         <label>
           Data de ida *
           <input
@@ -1758,6 +1765,7 @@ export function Detalhe({ access, userId }: { access: Access; userId: string }) 
       </Page>
     );
   const operacaoLiberada = isApprovalOperationallyReleased(row.aprovacao_status);
+  const aprovacaoPendenteAtiva = row.status === "solicitada" && row.aprovacao_status === "pendente";
   return (
     <Page
       title={resolveSolicitacaoColaborador(row)?.nome || "Solicitação"}
@@ -1772,7 +1780,7 @@ export function Detalhe({ access, userId }: { access: Access; userId: string }) 
       <div className="detail-head">
         <StatusBadge status={statusLabel[row.status]} />
         <span className={`badge approval-${row.aprovacao_status || "dispensada"}`}>
-          {row.aprovacao_status === "pendente" ? "Aguardando aprovação" : approvalStatusLabel(row.aprovacao_status)}
+          {aprovacaoPendenteAtiva ? "Aguardando aprovação" : row.status === "recusada" ? "Interrompida por recusa RO" : approvalStatusLabel(row.aprovacao_status)}
         </span>
         <span>{formatMotivoLabel(row.motivo)}</span>
         {row.motivo === "desligamento" && (
@@ -1781,19 +1789,19 @@ export function Detalhe({ access, userId }: { access: Access; userId: string }) 
           </span>
         )}
       </div>
-      <section className={`card detail approval-summary${row.aprovacao_status === "pendente" ? " approval-summary-pending" : ""}`}>
+      <section className={`card detail approval-summary${aprovacaoPendenteAtiva ? " approval-summary-pending" : ""}`}>
         <h2>Aprovação</h2>
         <dl>
-          <DT t="Status" v={row.aprovacao_status === "reprovada" ? "Reprovada na aprovação" : approvalStatusLabel(row.aprovacao_status)} />
+          <DT t="Status" v={row.status === "recusada" ? "Interrompida por recusa operacional" : row.aprovacao_status === "reprovada" ? "Reprovada na aprovação" : approvalStatusLabel(row.aprovacao_status)} />
           <DT t="Aprovador" v={(row as Solicitacao & {aprovador_nome?: string | null}).aprovador_nome || (row.aprovacao_status === "dispensada" || !row.aprovacao_status ? "Dispensada por regra do fluxo" : "Aprovador sem identificação")} />
-          {row.aprovacao_status === "pendente" && <DT t="Tempo aguardando" v={approvalWaitingLabel(row.created_at)} />}
+          {aprovacaoPendenteAtiva && <DT t="Tempo aguardando" v={approvalWaitingLabel(row.created_at)} />}
           {row.aprovacao_status === "aprovada" && <DT t="Aprovada em" v={dataHora(row.aprovado_em)} />}
           {row.aprovacao_status === "reprovada" && <><DT t="Reprovada em" v={dataHora(row.reprovado_em)} /><DT t="Motivo" v={row.motivo_reprovacao_aprovador} /></>}
         </dl>
       </section>
       {row.excluida_em && <section className="card rejection-summary"><h2>Solicitação excluída</h2><DT t="Excluída por" v={(row as Solicitacao & {excluida_por_nome?:string|null}).excluida_por_nome}/><DT t="Data da exclusão" v={dataHora(row.excluida_em)}/><DT t="Motivo" v={row.motivo_exclusao}/></section>}
       {row.status === "recusada" && <section className="card rejection-summary"><h2>Solicitação recusada</h2><DT t="Motivo" v={row.motivo_recusa} /><DT t="Recusada por" v={(row as Solicitacao & {recusada_por_nome?:string|null}).recusada_por_nome} /><DT t="Data" v={dataHora(row.recusada_em)} /></section>}
-      {row.aprovador_id === userId && row.aprovacao_status === "pendente" && <AprovacaoIndividual row={row} onDone={load}/>}
+      {row.status === "solicitada" && row.aprovador_id === userId && row.aprovacao_status === "pendente" && <AprovacaoIndividual row={row} onDone={load}/>}
       {row.motivo==="folga_campo"&&row.folga_antecipada&&<section className="card cycle-detail"><h2>Antecipação de folga de campo</h2><DT t="Data prevista do ciclo" v={data(row.folga_data_prevista_ciclo)}/><DT t="Data antecipada solicitada" v={data(row.data_ida)}/><DT t="Dias antecipados" v={row.folga_data_prevista_ciclo?String(Math.round((new Date(`${row.folga_data_prevista_ciclo}T12:00:00`).getTime()-new Date(`${row.data_ida}T12:00:00`).getTime())/86400000)):null}/><DT t="Justificativa" v={row.folga_antecipacao_justificativa}/><DT t="Status da análise" v={row.folga_antecipacao_status}/>{row.folga_antecipacao_status==="aprovada"&&<><DT t="Analisada por" v={(row as Solicitacao&{folga_antecipacao_analisada_por_nome?:string|null}).folga_antecipacao_analisada_por_nome}/><DT t="Analisada em" v={dataHora(row.folga_antecipacao_analisada_em)}/></>}{access.canOperateRO&&row.folga_antecipacao_status==="pendente"&&<AprovarAntecipacao row={row} onDone={load}/>}</section>}
       <section className="card detail request-data">
         <h2>Dados da solicitação</h2>
@@ -1852,7 +1860,7 @@ export function Detalhe({ access, userId }: { access: Access; userId: string }) 
         showRoActions={access.canOperateRO}
         showComplementary={access.isDenise}
       />}
-      {access.canOperateRO && operacaoLiberada && !row.excluida_em && <RecusarSolicitacao row={row} onDone={load} />}
+      {access.canOperateRO && row.aprovacao_status !== "reprovada" && !row.excluida_em && <RecusarSolicitacao row={row} onDone={load} />}
       {row.status === "recusada" && row.solicitante_id === userId && <div className="actions rejection-recreate"><Link className="btn primary" to="/nova" state={{refazer:row.id}}>Criar nova a partir desta</Link></div>}
       {access.canOperateRO && operacaoLiberada && !row.excluida_em && row.status === "solicitada" && (
         <Assumir row={row} onDone={load} />
@@ -1936,12 +1944,14 @@ function AcoesOperacionaisBloqueadas({
   showRoActions: boolean;
   showComplementary: boolean;
 }) {
-  const pendente = row.aprovacao_status === "pendente";
+  const pendente = row.status === "solicitada" && row.aprovacao_status === "pendente";
+  const recusada = row.status === "recusada";
   return <section className="card operations approval-operations-locked" aria-labelledby="approval-operations-title">
     <h2 id="approval-operations-title">Ações operacionais</h2>
     <div className={pendente ? "approval-operation-notice pending" : "approval-operation-notice rejected"} role="status">
       <strong>{pendente
         ? `Aguardando aprovação de ${aprovador || "Aprovador sem identificação"}`
+        : recusada ? "Solicitação encerrada por recusa operacional."
         : "Solicitação reprovada na etapa de aprovação."}</strong>
       {pendente && <span>As ações operacionais serão liberadas após a aprovação.</span>}
       {!pendente && row.motivo_reprovacao_aprovador && <span>Motivo: {row.motivo_reprovacao_aprovador}</span>}
@@ -1953,7 +1963,6 @@ function AcoesOperacionaisBloqueadas({
         <button type="button" className="btn secondary" disabled>Lançar custos</button>
         <button type="button" className="btn secondary" disabled>Anexar documentos operacionais</button>
         <button type="button" className="btn secondary" disabled>Finalizar atividades do RO</button>
-        <button type="button" className="btn danger" disabled>Recusar solicitação</button>
       </>}
       {(showRoActions || showComplementary) && <button type="button" className="btn secondary" disabled>Lançar passagem complementar</button>}
     </div>
@@ -1971,7 +1980,7 @@ function RecusarSolicitacao({row,onDone}:{row:Solicitacao;onDone:()=>void}) {
     setBusy(true);setErro("");
     const {error}=await supabase.rpc("ro_recusar_solicitacao",{p_solicitacao_id:row.id,p_motivo:util});
     if(error){
-      const mensagens:Record<string,string>={NAO_PERTENCE_EQUIPE_RO:"Somente integrantes ativos da equipe RO podem recusar.",SOLICITACAO_NAO_ENCONTRADA:"Solicitação não encontrada.",SOLICITACAO_JA_RECUSADA:"Esta solicitação já foi recusada.",PASSAGEM_JA_COMPRADA:"A passagem já foi comprada e não pode mais ser recusada.",STATUS_NAO_PERMITE_RECUSA:"O status atual não permite recusa.",MOTIVO_RECUSA_OBRIGATORIO:"Informe ao menos 10 caracteres úteis."};
+      const mensagens:Record<string,string>={NAO_PERTENCE_EQUIPE_RO:"Somente integrantes ativos da equipe RO podem recusar.",SOLICITACAO_NAO_ENCONTRADA:"Solicitação não encontrada.",SOLICITACAO_JA_RECUSADA:"Esta solicitação já foi recusada.",SOLICITACAO_JA_REPROVADA:"Esta solicitação já foi reprovada pelo aprovador.",PASSAGEM_JA_COMPRADA:"A passagem já foi comprada e não pode mais ser recusada.",STATUS_NAO_PERMITE_RECUSA:"O status atual não permite recusa.",MOTIVO_RECUSA_OBRIGATORIO:"Informe ao menos 10 caracteres úteis."};
       setErro(Object.entries(mensagens).find(([codigo])=>error.message.includes(codigo))?.[1]||"Não foi possível recusar a solicitação.");setBusy(false);return;
     }
     setAberto(false);setMotivo("");setBusy(false);onDone();
