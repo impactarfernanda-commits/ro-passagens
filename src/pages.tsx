@@ -2432,6 +2432,7 @@ type PdfDraft = {
   poltrona: string;
   localizador: string;
   numero_bilhete: string;
+  identificadores_texto: string[];
   tipo_documento: "voucher" | "bilhete_embarque" | "hospedagem" | "documento_sem_valor" | "documento";
   valores_financeiros_divergentes: boolean;
   valor_confirmado_manualmente: boolean;
@@ -2539,6 +2540,7 @@ function Compra({
         poltrona: extracted.poltrona || "",
         localizador: extracted.localizador || "",
         numero_bilhete: extracted.numero_bilhete || "",
+        identificadores_texto: extracted.identificadores_texto || [],
         tipo_documento: extracted.tipo_documento || "documento",
         valores_financeiros_divergentes:
           extracted.valores_financeiros_divergentes || false,
@@ -2595,6 +2597,7 @@ function Compra({
         poltrona: "",
         localizador: "",
         numero_bilhete: "",
+        identificadores_texto: [],
         tipo_documento: "documento",
         valores_financeiros_divergentes: false,
         valor_confirmado_manualmente: false,

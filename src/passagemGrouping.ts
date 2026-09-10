@@ -16,6 +16,7 @@ export type PassagemDocument = {
   poltrona?: string;
   localizador?: string;
   numero_bilhete?: string;
+  identificadores_texto?: string[];
   tipo_documento?: DocumentType;
   valores_financeiros_divergentes?: boolean;
   valor_confirmado_manualmente?: boolean;
@@ -112,8 +113,15 @@ function passageEvidence(left: PassagemDocument, right: PassagemDocument) {
 }
 
 function samePassage(left: PassagemDocument, right: PassagemDocument) {
-  const sharedLocator = normalized(left.localizador) &&
-    normalized(left.localizador) === normalized(right.localizador);
+  const leftLocator = normalized(left.localizador);
+  const rightLocator = normalized(right.localizador);
+  const leftTokens = new Set((left.identificadores_texto || []).map(normalized));
+  const rightTokens = new Set((right.identificadores_texto || []).map(normalized));
+  const sharedLocator = Boolean(
+    (leftLocator && leftLocator === rightLocator) ||
+    (leftLocator && rightTokens.has(leftLocator)) ||
+    (rightLocator && leftTokens.has(rightLocator)),
+  );
   const compatiblePassenger = !normalized(left.passageiro) ||
     !normalized(right.passageiro) ||
     compatibleText(normalized(left.passageiro), normalized(right.passageiro));
@@ -247,7 +255,11 @@ export function groupPdfDocumentsByPassagem(
       selectedSource === "desconhecido" &&
       selectedDocuments.some((document) => !document.valor_confirmado_manualmente);
     return {
-      key: extractPassagemSignature(group[0]) || `PENDENTE:${index}`,
+      key: extractPassagemSignature(
+        group.find((item) => normalized(item.localizador)) ||
+        group.find((item) => normalized(item.numero_bilhete)) ||
+        group[0],
+      ) || `PENDENTE:${index}`,
       documents: group,
       value: selectedValues[0] || 0,
       conflictingValues,

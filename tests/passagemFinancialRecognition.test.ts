@@ -1,7 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { extractTicketDataFromText } from "../src/pdfPassagemHeuristics.ts";
-import { buildPurchaseCosts } from "../src/purchaseCosts.ts";
+import { groupPdfDocumentsByPassagem } from "../src/passagemGrouping.ts";
+import { buildPurchaseCosts, totalTicketValues } from "../src/purchaseCosts.ts";
 
 test("Subtotal + RAC + Total escolhe o total final", () => {
   const result = extractTicketDataFromText(
@@ -98,4 +99,43 @@ test("fixture histórica exata de Kaique agrupa voucher e BP-e tarifário", () =
   assert.equal(costs.length, 1);
   assert.equal(costs[0].valor, 164.67);
   assert.notEqual(costs[0].valor, 438.67);
+});
+
+test("fixture da tela associa localizador solto do BP-e ao voucher", () => {
+  const rawBpe = [
+    "PASSAGEIRO DOCUMENTO AUXILIAR DO BILHETE DE PASSAGEM ELETRONICO",
+    "DOCUMENTO 712588 DESTINO PARTIDA LINHA TIPO DE VIAGEM HORARIO ORDINARIO",
+    "KAIQUE VINICIUS CAVALCANTE DOS SANTOS SALVADOR PETROLANDIA",
+    "22/08/2026 13:30 POLTRONA 1 1NRM0Q",
+    "TARIFA R$ 274,00 TAXA DE EMBARQUE R$ 9,08 VALOR TOTAL R$ 283,08",
+    "DESCONTO R$ 173,78 VALOR A PAGAR R$ 109,30 VALOR PAGO R$ 109,30",
+  ].join(" ");
+  const bpe = extractTicketDataFromText(
+    rawBpe,
+    "BILHETE GUANABARA KAIQUE SALVADOR_PETROLANDIA.pdf",
+  );
+  const voucher = extractTicketDataFromText(
+    "Pedido concluído Passageiro KAIQUE VINICIUS CAVALCANTE DOS SANTOS Localizador 1NRM0Q Data 22/08/2026 Partida 13:30 Valor Total R$ 164,67",
+    "VOUCHER KAIQUE SALVADOR_PETROLANDIA.pdf",
+  );
+  assert.equal(bpe.valor_passagem, "109.30");
+  assert.equal(bpe.localizador, undefined);
+  assert.ok(bpe.identificadores_texto?.includes("1NRM0Q"));
+  assert.notEqual(bpe.passageiro, "DOCUMENTO AUXILIAR DO");
+  assert.notEqual(bpe.origem, "DESTINO");
+  assert.notEqual(bpe.destino, "PARTIDA LINHA TIPO DE VIAGEM");
+
+  const documents = [
+    { id: "bpe-real", nome_arquivo: "bpe.pdf", valor: bpe.valor_passagem || "", tipo_documento: bpe.tipo_documento, partida_em: bpe.partida_em, passageiro: bpe.passageiro, origem: bpe.origem, destino: bpe.destino, poltrona: bpe.poltrona, localizador: bpe.localizador, numero_bilhete: bpe.numero_bilhete, identificadores_texto: bpe.identificadores_texto },
+    { id: "voucher-real", nome_arquivo: "voucher.pdf", valor: voucher.valor_passagem || "", tipo_documento: voucher.tipo_documento, partida_em: voucher.partida_em, passageiro: voucher.passageiro, localizador: voucher.localizador, identificadores_texto: voucher.identificadores_texto },
+  ];
+  const groups = groupPdfDocumentsByPassagem(documents);
+  const costs = buildPurchaseCosts("e3fbe4f0-815a-42da-b4fc-3c53c2f885cc", documents, { uber: "", refeicao: "", outros: "" }, "centro-custo");
+  assert.equal(groups.length, 1);
+  assert.equal(groups[0].documents.length, 2);
+  assert.equal(groups[0].key, "LOC:1NRM0Q");
+  assert.equal(groups[0].value, 164.67);
+  assert.equal(costs.length, 1);
+  assert.equal(costs[0].valor, 164.67);
+  assert.notEqual(totalTicketValues(documents), 273.97);
 });

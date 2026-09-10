@@ -30,6 +30,7 @@ export type PurchaseData = {
   poltrona: string;
   localizador: string;
   numero_bilhete: string;
+  identificadores_texto: string[];
   tipo_documento: DocumentType;
   valores_financeiros_divergentes: boolean;
 };
@@ -104,7 +105,7 @@ function parseSeparatedDepartureDateTime(text: string) {
 }
 
 const invalidPassengerTerms =
-  /\b(?:JA TENHA IMPRESSO|BILHETE ELETRONICO|RETIRADA GUICHE|ORIENTACOES GERAIS|CANCELAMENTOS?|ALTERACOES|APRESENTE SEU DOCUMENTO|TUDO CERTO|DETALHES DAS PASSAGENS|NOME DO PASSAGEIRO|SEU PEDIDO|DOCUMENTO DE IDENTIFICACAO)\b/i;
+  /\b(?:DOCUMENTO AUXILIAR|JA TENHA IMPRESSO|BILHETE ELETRONICO|RETIRADA GUICHE|ORIENTACOES GERAIS|CANCELAMENTOS?|ALTERACOES|APRESENTE SEU DOCUMENTO|TUDO CERTO|DETALHES DAS PASSAGENS|NOME DO PASSAGEIRO|SEU PEDIDO|DOCUMENTO DE IDENTIFICACAO)\b/i;
 
 function passengerCandidate(value: string) {
   const candidate = value.replace(/\s+/g, " ")
@@ -176,6 +177,25 @@ function formatRoutePlace(value: string) {
   return match ? `${match[1]}/${match[2]}` : clean;
 }
 
+const invalidRouteTerms =
+  /\b(?:DOCUMENTO AUXILIAR|DESTINO|ORIGEM|PARTIDA|LINHA|TIPO DE VIAGEM|VIACAO|PASSAGEIRO|HORARIO ORDINARIO)\b/i;
+
+function validRoutePlace(value: string) {
+  const formatted = formatRoutePlace(value);
+  if (!formatted || invalidRouteTerms.test(formatted)) return "";
+  const words = formatted.split(/[ /]+/).filter(Boolean);
+  return words.length <= 8 ? formatted : "";
+}
+
+function extractIdentifierTokens(text: string) {
+  return [...new Set(
+    normalizePassagemKey(text).split(" ").filter((token) =>
+      token.length >= 5 && token.length <= 12 &&
+      /[A-Z]/.test(token) && /\d/.test(token),
+    ),
+  )];
+}
+
 function extractRouteFromFilename(fileName: string, passenger: string) {
   const marked = fileName
     .replace(/\.pdf$/i, "")
@@ -234,12 +254,8 @@ export function extractTicketDataFromText(
     const destinoTextual = labelled([
       "Destino(?:\\s*-\\s*endere[cç]o)?", "Desembarque\\s+em",
     ]);
-    const origem = origemTextual
-      ? formatRoutePlace(origemTextual)
-      : fileRoute.origem;
-    const destino = destinoTextual
-      ? formatRoutePlace(destinoTextual)
-      : fileRoute.destino;
+    const origem = validRoutePlace(origemTextual) || fileRoute.origem;
+    const destino = validRoutePlace(destinoTextual) || fileRoute.destino;
     const poltrona = captures(text, ["Poltrona", "Assento"], stops)
       .map((value) => value.match(/\b\d{1,3}[A-Z]?\b/i)?.[0] || "")
       .find(Boolean) || "";
@@ -253,6 +269,7 @@ export function extractTicketDataFromText(
     const numeroBilhete = /\d/.test(numeroBilheteCandidate)
       ? numeroBilheteCandidate
       : "";
+    const identificadoresTexto = extractIdentifierTokens(text);
     const hasVoucherTerms =
       /\b(?:PEDIDO CONCLUIDO|DETALHES DO PAGAMENTO|VALOR TOTAL|VALOR POR POLTRONA|COMPROVANTE|VOUCHER|RODOVIARIAONLINE|QUERO PASSAGEM)\b/.test(
         normalizedText,
@@ -290,6 +307,7 @@ export function extractTicketDataFromText(
       ...(poltrona && { poltrona }),
       ...(localizador && { localizador }),
       ...(numeroBilhete && { numero_bilhete: numeroBilhete }),
+      identificadores_texto: identificadoresTexto,
       tipo_documento: tipoDocumento,
       valores_financeiros_divergentes:
         tipoDocumento !== "bilhete_embarque" && financial.divergent,
