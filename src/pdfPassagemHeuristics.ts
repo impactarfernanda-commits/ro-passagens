@@ -131,6 +131,29 @@ function labelledMoney(text: string, labels: string[], stops: string[]) {
   return captures(text, labels, stops).map(parseMoney).filter(Boolean).map(Number);
 }
 
+const moneyTokenPattern =
+  "(?:R\\s*\\$\\s*)?\\d{1,3}(?:\\.\\d{3})*[.,]\\s*\\d{2}";
+
+function tabularFinancialTotal(text: string) {
+  const header = /\bTarifa\b\s+\bTaxas?\b\s+\bTotal\b/i;
+  const match = header.exec(text);
+  if (!match) return { present: false, value: "" };
+
+  // The values are associated by position with the three semantic headers.
+  // Requiring a complete, adjacent row prevents a partial table from making
+  // "Total" consume the tariff (the first value after the header row).
+  const values = text.slice(match.index + match[0].length).match(
+    new RegExp(
+      `^\\s*(${moneyTokenPattern})\\s+(${moneyTokenPattern})\\s+(${moneyTokenPattern})(?=\\s|$)`,
+      "i",
+    ),
+  );
+  return {
+    present: true,
+    value: values ? parseMoney(values[3]) : "",
+  };
+}
+
 function extractFinancialValues(
   text: string,
   stops: string[],
@@ -148,10 +171,15 @@ function extractFinancialValues(
     "Valor\\s+por\\s+poltrona", "Valor\\s+da\\s+passagem",
   ], stops);
   const tariff = labelledMoney(text, ["Tarifa"], stops);
+  const tabular = tabularFinancialTotal(text);
   const currency = [...text.matchAll(/R\s*\$\s*\d[\d.\s]*[.,]\s*\d{2}/gi)]
     .map((match) => parseMoney(match[0])).filter(Boolean).map(Number);
   const candidates = officialTicket && payable.length
     ? payable
+    : tabular.value
+      ? [Number(tabular.value)]
+      : tabular.present
+        ? []
     : explicitTotal.length
       ? explicitTotal
       : payable.length

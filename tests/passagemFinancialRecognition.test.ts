@@ -20,6 +20,27 @@ test("Subtotal isolado não é classificado como Total", () => {
   assert.notEqual(result.valor_passagem, "1865.56");
 });
 
+test("eticket tabular associa Total à terceira coluna sem depender de R$ ou espaçamento", () => {
+  for (const text of [
+    "Tarifamento\nTarifa Taxas Total\nR$ 739,72 R$ 580,00 R$ 1.319,72",
+    "Tarifa Taxas Total\n739,72 580,00 1.319,72",
+    "Tarifa    Taxas       Total       R$ 739,72    R$ 580,00      R$ 1.319,72",
+    "Tarifa\tTaxas\tTotal\t739,72\t580,00\t1.319,72",
+  ]) {
+    const result = extractTicketDataFromText(text, "eticket-sanitizado.pdf");
+    assert.equal(result.valor_passagem, "1319.72");
+    assert.notEqual(result.valor_passagem, "739.72");
+  }
+});
+
+test("tabela financeira incompleta falha fechado", () => {
+  const result = extractTicketDataFromText(
+    "Tarifamento Tarifa Taxas Total R$ 739,72 R$ 580,00",
+    "eticket-incompleto.pdf",
+  );
+  assert.equal(result.valor_passagem, undefined);
+});
+
 test("PDF sem texto ou sem valor falha fechado", () => {
   for (const text of ["", "Imagem digitalizada sem camada textual"]) {
     const result = extractTicketDataFromText(text, "IDA2.pdf");
