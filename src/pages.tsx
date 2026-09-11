@@ -51,7 +51,7 @@ import { compraFolgaLiberada, dataAntecipaCiclo, estadoEfetivoFolga, folgaFutura
 import { motivoPossuiRetorno, normalizarCamposRetorno } from "./retornoRules";
 import { formatCityUf, normalizeNeighborhoodForDisplay, normalizeStreetForDisplay, parseCityUf } from "./collaboratorDisplay";
 import { currentCostCenterPrefill } from "./collaboratorCostCenter";
-import { resolveSolicitacaoColaborador, solicitacaoCorrespondeBuscaPessoa } from "./solicitacaoColaborador";
+import { idsSolicitacoesParaResolver, mapearNomesColaboradoresSolicitacoes, resolveSolicitacaoFuncionarioNome, solicitacaoCorrespondeBuscaPessoa } from "./solicitacaoColaborador";
 import { resumoStatusSolicitacao, solicitacaoStatusOptions, statusPertenceAoFiltro, todosStatusSolicitacao, type SolicitacaoStatusFilter } from "./solicitacoesFilters";
 import { CostCenterCombobox } from "./CostCenterCombobox";
 import { draftPrivateRef, emptyNovaSolicitacaoForm, hasDraftContent, NOVA_SOLICITACAO_DRAFT_MAX_AGE_MS, novaSolicitacaoDraftKey, parseDraft, serializeDraft, validateDraftCatalogIds, type NovaSolicitacaoDraftData, type NovaSolicitacaoDraftDocument } from "./novaSolicitacaoDraft";
@@ -77,7 +77,15 @@ import type {
   Status,
 } from "./types";
 const join =
-  "*, funcionario:funcionarios(id,nome), colaborador:ro_funcionarios_enderecos_privados!ro_passagem_solicitacoes_colaborador_id_fkey(id,nome), obra:obras!ro_passagem_solicitacoes_obra_id_fkey(id,nome,codigo,descricao), centro_custo_retorno:obras!ro_passagem_solicitacoes_centro_custo_retorno_id_fkey(id,nome,codigo,descricao), centro_custo_destino:obras!ro_passagem_solicitacoes_centro_custo_destino_id_fkey(id,nome,codigo,descricao), custos:ro_passagem_custos(*), notificacoes:ro_passagem_notificacoes(*), historico:ro_passagem_historico(*), anexos:ro_passagem_anexos(*)";
+  "*, funcionario:funcionarios(id,nome), obra:obras!ro_passagem_solicitacoes_obra_id_fkey(id,nome,codigo,descricao), centro_custo_retorno:obras!ro_passagem_solicitacoes_centro_custo_retorno_id_fkey(id,nome,codigo,descricao), centro_custo_destino:obras!ro_passagem_solicitacoes_centro_custo_destino_id_fkey(id,nome,codigo,descricao), custos:ro_passagem_custos(*), notificacoes:ro_passagem_notificacoes(*), historico:ro_passagem_historico(*), anexos:ro_passagem_anexos(*)";
+async function carregarNomesColaboradoresSolicitacoes(solicitacoes: Array<Pick<Solicitacao, "id">>) {
+  const ids = idsSolicitacoesParaResolver(solicitacoes);
+  if (!ids.length) return {};
+  const { data } = await supabase.rpc("ro_nomes_colaboradores_solicitacoes", {
+    p_solicitacao_ids: ids,
+  });
+  return mapearNomesColaboradoresSolicitacoes(data);
+}
 function useCatalogos() {
   const [funcionarios, setF] = useState<Funcionario[]>([]);
   const [obras, setO] = useState<Obra[]>([]);
@@ -305,6 +313,7 @@ function uniqueMonthlyRequests(custos: DashboardMonthlyCost[]) {
 export function Dashboard({ access }: { access: Access }) {
   const [rows, setRows] = useState<Solicitacao[]>([]);
   const [custosMensais, setCustosMensais] = useState<DashboardMonthlyCost[]>([]);
+  const [nomesFuncionarios, setNomesFuncionarios] = useState<Record<string, string>>({});
   const [mesReferencia, setMesReferencia] = useState(
     () =>
       `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, "0")}`,
@@ -326,19 +335,20 @@ export function Dashboard({ access }: { access: Access }) {
       supabase
         .from("ro_passagem_custos")
         .select(
-          "id,solicitacao_id,tipo,descricao,valor,created_at,solicitacao:ro_passagem_solicitacoes!inner(id,status,motivo,houve_imprevisto,excluida_em,funcionario_id,colaborador_id,funcionario:funcionarios(id,nome),colaborador:ro_funcionarios_enderecos_privados!ro_passagem_solicitacoes_colaborador_id_fkey(id,nome),anexos:ro_passagem_anexos(complementar,imprevisto))",
+          "id,solicitacao_id,tipo,descricao,valor,created_at,solicitacao:ro_passagem_solicitacoes!inner(id,status,motivo,houve_imprevisto,excluida_em,funcionario_id,colaborador_id,funcionario:funcionarios(id,nome),anexos:ro_passagem_anexos(complementar,imprevisto))",
         )
         .is("solicitacao.excluida_em", null)
         .gte("created_at", inicioMes)
         .lt("created_at", inicioMesSeguinte)
         .gt("valor", 0),
     ]);
-    setRows((solicitacoesResult.data || []) as unknown as Solicitacao[]);
-    setCustosMensais(
-      ((custosResult.data || []) as unknown as DashboardMonthlyCost[]).filter(
-        (custo) => custo.solicitacao.status !== "cancelada",
-      ),
+    const solicitacoes = (solicitacoesResult.data || []) as unknown as Solicitacao[];
+    const custos = ((custosResult.data || []) as unknown as DashboardMonthlyCost[]).filter(
+      (custo) => custo.solicitacao.status !== "cancelada",
     );
+    setRows(solicitacoes);
+    setCustosMensais(custos);
+    setNomesFuncionarios(await carregarNomesColaboradoresSolicitacoes(solicitacoes));
     setLoading(false);
   }, [mesReferencia]);
   useEffect(() => {
@@ -398,7 +408,7 @@ export function Dashboard({ access }: { access: Access }) {
           <small>
             {itens
               .slice(0, 3)
-              .map((x) => resolveSolicitacaoColaborador(x)?.nome)
+              .map((x) => resolveSolicitacaoFuncionarioNome(x, nomesFuncionarios[x.id]))
               .filter(Boolean)
               .join(", ") || "Nenhum custo no período"}
           </small>
@@ -427,7 +437,7 @@ export function Dashboard({ access }: { access: Access }) {
         <small>
           {solicitacoesImprevisto
             .slice(0, 3)
-            .map((x) => resolveSolicitacaoColaborador(x)?.nome)
+            .map((x) => resolveSolicitacaoFuncionarioNome(x, nomesFuncionarios[x.id]))
             .filter(Boolean)
             .join(", ") || "Nenhum imprevisto no período"}
         </small>
@@ -589,7 +599,7 @@ export function Dashboard({ access }: { access: Access }) {
                 {rows.slice(0, 5).map((r) => (
                   <Link to={`/solicitacoes/${r.id}`} key={r.id}>
                     <div>
-                      <strong>{resolveSolicitacaoColaborador(r)?.nome || "Não identificado"}</strong>
+                      <strong>{resolveSolicitacaoFuncionarioNome(r, nomesFuncionarios[r.id]) || "Não identificado"}</strong>
                       <span>
                         {r.origem} → {r.destino}
                       </span>
@@ -651,7 +661,7 @@ export function Dashboard({ access }: { access: Access }) {
                     {detalheCard.itens.map((item) => (
                       <tr key={item.solicitacao.id}>
                         <td>
-                          {resolveSolicitacaoColaborador(item.solicitacao)?.nome ||
+                          {resolveSolicitacaoFuncionarioNome(item.solicitacao, nomesFuncionarios[item.solicitacao.id]) ||
                             "Não identificado"}
                         </td>
                         <td>
@@ -732,6 +742,7 @@ export function Solicitacoes({
   const mostrandoExcluidas = access.canOperateRO && searchParams.get("excluidas") === "true";
   const [rows, setRows] = useState<Solicitacao[]>([]);
   const [userLabels, setUserLabels] = useState<Record<string, string>>({});
+  const [nomesFuncionarios, setNomesFuncionarios] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
   const [approvalView, setApprovalView] = useState<"pending" | "history">("pending");
   const [filters, setFilters] = useState({
@@ -768,9 +779,12 @@ export function Solicitacoes({
           .filter(Boolean) as string[],
       ),
     ];
-    const { data: labels } = ids.length
-      ? await supabase.rpc("ro_user_labels", { p_user_ids: ids })
-      : { data: [] };
+    const [{ data: labels }, nomesCarregados] = await Promise.all([
+      ids.length
+        ? supabase.rpc("ro_user_labels", { p_user_ids: ids })
+        : Promise.resolve({ data: [] }),
+      carregarNomesColaboradoresSolicitacoes(loaded),
+    ]);
     setUserLabels(
       Object.fromEntries(
         (labels || []).map((item: { id: string; label: string }) => [
@@ -779,6 +793,7 @@ export function Solicitacoes({
         ]),
       ),
     );
+    setNomesFuncionarios(nomesCarregados);
     setRows(loaded);
     setLoading(false);
   }, [approvalView, approvalsOnly, mostrandoExcluidas, userId]);
@@ -812,7 +827,7 @@ export function Solicitacoes({
       matchesApprovalFilter(r.aprovacao_status, filters.aprovacao) &&
       (!filters.obra || r.obra_id === filters.obra) &&
       (!filters.busca ||
-        solicitacaoCorrespondeBuscaPessoa(r, filters.busca) ||
+        solicitacaoCorrespondeBuscaPessoa(r, filters.busca, nomesFuncionarios[r.id]) ||
         centroCustoMatches(r.obra || { nome: "" }, filters.busca) ||
         centroCustoMatches(r.centro_custo_destino || { nome: "" }, filters.busca) ||
         centroCustoMatches(r.centro_custo_retorno || { nome: "" }, filters.busca)),
@@ -935,7 +950,7 @@ export function Solicitacoes({
                 return (
                   <tr key={r.id} className={aprovacaoPendenteAtiva ? "approval-awaiting" : undefined}>
                     <td>
-                      <strong>{resolveSolicitacaoColaborador(r)?.nome || "—"}</strong>
+                      <strong>{resolveSolicitacaoFuncionarioNome(r, nomesFuncionarios[r.id]) || "—"}</strong>
                       <small>{formatCentroCustoLabel(r.obra) || "Sem obra"}</small>
                     </td>
                     <td>
@@ -1655,6 +1670,7 @@ export function Configuracoes() {
 export function Detalhe({ access, userId }: { access: Access; userId: string }) {
   const { id } = useParams();
   const [row, setRow] = useState<Solicitacao | null>(null);
+  const [funcionarioNomeExibicao, setFuncionarioNomeExibicao] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [erro, setErro] = useState("");
   const [erroIdentificacaoSolicitante,setErroIdentificacaoSolicitante]=useState(false);
@@ -1662,6 +1678,7 @@ export function Detalhe({ access, userId }: { access: Access; userId: string }) 
   const [enderecoResidencial,setEnderecoResidencial]=useState<{nome?:string;data_nascimento?:string|null;cpf?:string|null;rg?:string|null;telefone?:string|null;cep?:string|null;logradouro:string|null;numero?:string|null;complemento?:string|null;bairro:string|null;cidade:string;uf:string;atualizado_em:string}|null>(null);
   const load = useCallback(() => {
     if (!id) return;
+    setFuncionarioNomeExibicao(null);
     supabase
       .from("ro_passagem_solicitacoes")
       .select(join)
@@ -1683,9 +1700,10 @@ export function Detalhe({ access, userId }: { access: Access; userId: string }) 
             found.folga_antecipacao_analisada_por,
             ...anexos.map(criadorAnexoId),
           ].filter(Boolean) as string[];
-          const { data: labels, error: labelsError } = await supabase.rpc("ro_user_labels", {
-            p_user_ids: ids,
-          });
+          const [{ data: labels, error: labelsError }, nomesFuncionarios] = await Promise.all([
+            supabase.rpc("ro_user_labels", { p_user_ids: ids }),
+            carregarNomesColaboradoresSolicitacoes([found]),
+          ]);
           const labelMap = new Map(
             (labels || []).map((item: { id: string; label: string }) => [
               item.id,
@@ -1694,6 +1712,7 @@ export function Detalhe({ access, userId }: { access: Access; userId: string }) 
           );
           const solicitanteResolvido=resolveUserLabel(found.solicitante_id,labels,Boolean(labelsError));
           setErroIdentificacaoSolicitante(solicitanteResolvido.status==="error");
+          setFuncionarioNomeExibicao(nomesFuncionarios[found.id] || null);
           setRow({
             ...found,
             solicitante: {
@@ -1747,7 +1766,7 @@ export function Detalhe({ access, userId }: { access: Access; userId: string }) 
   const aprovacaoPendenteAtiva = row.status === "solicitada" && row.aprovacao_status === "pendente";
   return (
     <Page
-      title={resolveSolicitacaoColaborador(row)?.nome || "Solicitação"}
+      title={resolveSolicitacaoFuncionarioNome(row, funcionarioNomeExibicao) || "Solicitação"}
       subtitle={`Criada em ${dataHora(row.created_at)}`}
       action={
         <Link className="btn secondary" to="/solicitacoes">
@@ -1786,7 +1805,7 @@ export function Detalhe({ access, userId }: { access: Access; userId: string }) 
         <h2>Dados da solicitação</h2>
         {erroIdentificacaoSolicitante&&<div className="alert">Não foi possível carregar a identificação do solicitante. Tente atualizar a página.</div>}
         <dl>
-          <DT t="Funcionário" v={resolveSolicitacaoColaborador(row)?.nome} />
+          <DT t="Funcionário" v={resolveSolicitacaoFuncionarioNome(row, funcionarioNomeExibicao)} />
           <DT
             t="Solicitante"
             v={row.solicitante?.full_name || "Solicitante sem identificação"}
@@ -1831,7 +1850,7 @@ export function Detalhe({ access, userId }: { access: Access; userId: string }) 
           <DT t="Observações" v={row.observacoes_solicitante} />
         </dl>
       </section>
-      {(access.isRh||access.isRO||access.canImport)&&enderecoResidencial&&<section className="card detail"><h2>Dados do passageiro</h2><dl><DT t="Nome" v={enderecoResidencial.nome||resolveSolicitacaoColaborador(row)?.nome}/><DT t="Data de nascimento" v={data(enderecoResidencial.data_nascimento)}/><DT t="CPF" v={formatCpf(enderecoResidencial.cpf)}/><DT t="RG" v={enderecoResidencial.rg}/><DT t="Telefone" v={formatPhone(enderecoResidencial.telefone)}/><DT t="Logradouro" v={enderecoResidencial.logradouro}/><DT t="Bairro" v={enderecoResidencial.bairro}/><DT t="Cidade / UF" v={`${enderecoResidencial.cidade||"—"} / ${enderecoResidencial.uf||"—"}`}/><DT t="Atualizado em" v={dataHora(enderecoResidencial.atualizado_em)}/>{row.destino_residencial_origem==="excepcional"&&<DT t="Destino alterado manualmente" v={row.destino_residencial_justificativa}/>}</dl></section>}
+      {(access.isRh||access.isRO||access.canImport)&&enderecoResidencial&&<section className="card detail"><h2>Dados do passageiro</h2><dl><DT t="Nome" v={enderecoResidencial.nome||resolveSolicitacaoFuncionarioNome(row, funcionarioNomeExibicao)}/><DT t="Data de nascimento" v={data(enderecoResidencial.data_nascimento)}/><DT t="CPF" v={formatCpf(enderecoResidencial.cpf)}/><DT t="RG" v={enderecoResidencial.rg}/><DT t="Telefone" v={formatPhone(enderecoResidencial.telefone)}/><DT t="Logradouro" v={enderecoResidencial.logradouro}/><DT t="Bairro" v={enderecoResidencial.bairro}/><DT t="Cidade / UF" v={`${enderecoResidencial.cidade||"—"} / ${enderecoResidencial.uf||"—"}`}/><DT t="Atualizado em" v={dataHora(enderecoResidencial.atualizado_em)}/>{row.destino_residencial_origem==="excepcional"&&<DT t="Destino alterado manualmente" v={row.destino_residencial_justificativa}/>}</dl></section>}
       {(access.isRh||access.isRO||access.isAdmin)&&documentosInternos.length>0&&<section className="card"><h2>Documentos internos restritos</h2>{documentosInternos.map((d)=><div className="actions" key={d.id}><span>{d.categoria==="termo_justa_causa"?"Termo de justa causa":"Carta de pedido de demissão"}</span>{d.url&&<a className="btn secondary" href={d.url} target="_blank" rel="noreferrer">Abrir PDF</a>}</div>)}</section>}
       {!operacaoLiberada && (access.canOperateRO || access.isDenise) && <AcoesOperacionaisBloqueadas
         row={row}

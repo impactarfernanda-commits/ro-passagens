@@ -10,6 +10,23 @@ export type SolicitacaoColaboradorResolvido = {
 
 type SolicitacaoPessoa = Pick<Solicitacao, "funcionario_id" | "colaborador_id" | "funcionario" | "colaborador">;
 
+export type NomeColaboradorSolicitacaoSeguro = {
+  solicitacao_id: string;
+  funcionario_nome_exibicao: string | null;
+};
+
+export function idsSolicitacoesParaResolver<T extends Pick<Solicitacao, "id">>(solicitacoes: T[]) {
+  return [...new Set(solicitacoes.map(({ id }) => id).filter(Boolean))];
+}
+
+export function mapearNomesColaboradoresSolicitacoes(rows: NomeColaboradorSolicitacaoSeguro[] | null | undefined) {
+  return Object.fromEntries(
+    (rows || [])
+      .filter(({ solicitacao_id, funcionario_nome_exibicao }) => solicitacao_id && funcionario_nome_exibicao?.trim())
+      .map(({ solicitacao_id, funcionario_nome_exibicao }) => [solicitacao_id, funcionario_nome_exibicao!.trim()]),
+  );
+}
+
 export function resolveSolicitacaoColaborador(solicitacao: SolicitacaoPessoa): SolicitacaoColaboradorResolvido | null {
   if (solicitacao.colaborador_id && solicitacao.colaborador?.nome) {
     return {
@@ -32,6 +49,15 @@ export function resolveSolicitacaoColaborador(solicitacao: SolicitacaoPessoa): S
   return null;
 }
 
+export function resolveSolicitacaoFuncionarioNome(
+  solicitacao: SolicitacaoPessoa,
+  funcionarioNomeExibicao?: string | null,
+) {
+  const nomeSeguro = funcionarioNomeExibicao?.trim();
+  if (solicitacao.colaborador_id && nomeSeguro) return nomeSeguro;
+  return resolveSolicitacaoColaborador(solicitacao)?.nome || nomeSeguro || null;
+}
+
 export function chaveColaboradorCatalogo(item: Pick<Funcionario, "id" | "funcionario_id">) {
   return item.funcionario_id && item.id === item.funcionario_id ? `obras:${item.id}` : `privado:${item.id}`;
 }
@@ -44,7 +70,7 @@ export function solicitacaoCorrespondeAoColaborador(solicitacao: SolicitacaoPess
   return resolveSolicitacaoColaborador(solicitacao)?.idOuChave === chave;
 }
 
-export function solicitacaoCorrespondeBuscaPessoa(solicitacao: SolicitacaoPessoa, busca: string) {
-  const pessoa = resolveSolicitacaoColaborador(solicitacao);
-  return Boolean(pessoa && normalizarBuscaPessoa(pessoa.nome).includes(normalizarBuscaPessoa(busca)));
+export function solicitacaoCorrespondeBuscaPessoa(solicitacao: SolicitacaoPessoa, busca: string, funcionarioNomeExibicao?: string | null) {
+  const nome = resolveSolicitacaoFuncionarioNome(solicitacao, funcionarioNomeExibicao);
+  return Boolean(nome && normalizarBuscaPessoa(nome).includes(normalizarBuscaPessoa(busca)));
 }

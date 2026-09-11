@@ -38,7 +38,7 @@ test("barra remove Registros e Funcionários e preserva Motivo, Aprovação e Ob
 test("busca continua localizando funcionário e combina com os demais filtros", () => {
   const solicitacao = { funcionario_id: "1", colaborador_id: null, funcionario: { id: "1", nome: "José da Silva" }, colaborador: null };
   assert.equal(solicitacaoCorrespondeBuscaPessoa(solicitacao, "jose"), true);
-  assert.match(page, /solicitacaoCorrespondeBuscaPessoa\(r, filters\.busca\)/);
+  assert.match(page, /solicitacaoCorrespondeBuscaPessoa\(r, filters\.busca, nomesFuncionarios\[r\.id\]\)/);
   assert.match(page, /statusPertenceAoFiltro\(r\.status, filters\.status\)[\s\S]*filters\.motivo[\s\S]*matchesApprovalFilter[\s\S]*filters\.obra[\s\S]*filters\.busca/);
 });
 
