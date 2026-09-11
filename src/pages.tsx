@@ -34,7 +34,6 @@ import {
   formatMotivoLabel,
   motivoLabel,
   statusLabel,
-  statusOptions,
 } from "./lib";
 import { validatePdfFile, validatePdfSignature } from "./pdfFileValidation";
 import { AdicionarAnexo } from "./AdicionarAnexo";
@@ -52,7 +51,8 @@ import { compraFolgaLiberada, dataAntecipaCiclo, estadoEfetivoFolga, folgaFutura
 import { motivoPossuiRetorno, normalizarCamposRetorno } from "./retornoRules";
 import { formatCityUf, normalizeNeighborhoodForDisplay, normalizeStreetForDisplay, parseCityUf } from "./collaboratorDisplay";
 import { currentCostCenterPrefill } from "./collaboratorCostCenter";
-import { chaveColaboradorCatalogo, resolveSolicitacaoColaborador, solicitacaoCorrespondeAoColaborador, solicitacaoCorrespondeBuscaPessoa } from "./solicitacaoColaborador";
+import { resolveSolicitacaoColaborador, solicitacaoCorrespondeBuscaPessoa } from "./solicitacaoColaborador";
+import { resumoStatusSolicitacao, solicitacaoStatusOptions, statusPertenceAoFiltro, todosStatusSolicitacao, type SolicitacaoStatusFilter } from "./solicitacoesFilters";
 import { CostCenterCombobox } from "./CostCenterCombobox";
 import { draftPrivateRef, emptyNovaSolicitacaoForm, hasDraftContent, NOVA_SOLICITACAO_DRAFT_MAX_AGE_MS, novaSolicitacaoDraftKey, parseDraft, serializeDraft, validateDraftCatalogIds, type NovaSolicitacaoDraftData, type NovaSolicitacaoDraftDocument } from "./novaSolicitacaoDraft";
 import { cleanupExpiredDraftPrivate, deleteDraftPrivate, readDraftPrivate, removeDraftDocument, saveDraftDocument, saveDraftPix } from "./novaSolicitacaoDraftPrivate";
@@ -724,22 +724,20 @@ export function Solicitacoes({
   userId: string;
   approvalsOnly?: boolean;
 }) {
-  const { funcionarios, obras } = useCatalogos();
+  const { obras } = useCatalogos();
   const [searchParams, setSearchParams] = useSearchParams();
   const motivoParam = searchParams.get("motivo");
   const motivoInicial =
     motivoParam && motivoParam in motivoLabel ? motivoParam : "";
-  const imprevistoAtivo = searchParams.get("imprevisto") === "true";
   const mostrandoExcluidas = access.canOperateRO && searchParams.get("excluidas") === "true";
   const [rows, setRows] = useState<Solicitacao[]>([]);
   const [userLabels, setUserLabels] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
   const [approvalView, setApprovalView] = useState<"pending" | "history">("pending");
   const [filters, setFilters] = useState({
-    status: "",
+    status: todosStatusSolicitacao as SolicitacaoStatusFilter[],
     aprovacao: "" as ApprovalFilter,
     motivo: motivoInicial,
-    funcionario: "",
     obra: "",
     busca: "",
   });
@@ -807,29 +805,11 @@ export function Solicitacoes({
       { replace: true },
     );
   }
-  function alterarImprevisto(ativo: boolean) {
-    setSearchParams(
-      (current) => {
-        const next = new URLSearchParams(current);
-        if (ativo) next.set("imprevisto", "true");
-        else next.delete("imprevisto");
-        return next;
-      },
-      { replace: true },
-    );
-  }
   const shown = rows.filter(
     (r) =>
-      (!filters.status ||
-        (filters.status === "em_andamento"
-          ? ["em_andamento", "em_analise"].includes(r.status)
-          : r.status === filters.status)) &&
+      statusPertenceAoFiltro(r.status, filters.status) &&
       (!filters.motivo || r.motivo === filters.motivo) &&
       matchesApprovalFilter(r.aprovacao_status, filters.aprovacao) &&
-      (!imprevistoAtivo ||
-        r.houve_imprevisto ||
-        (r.anexos || []).some((a) => a.complementar || a.imprevisto)) &&
-      (!filters.funcionario || solicitacaoCorrespondeAoColaborador(r, filters.funcionario)) &&
       (!filters.obra || r.obra_id === filters.obra) &&
       (!filters.busca ||
         solicitacaoCorrespondeBuscaPessoa(r, filters.busca) ||
@@ -854,26 +834,44 @@ export function Solicitacoes({
           <button type="button" role="tab" aria-selected={approvalView === "history"} className={approvalView === "history" ? "active" : ""} onClick={() => setApprovalView("history")}>Minhas aprovações</button>
         </div>
       )}
-      <div className="card filters">
-        <label>
+      <div className="card filters solicitacoes-filters">
+        <label className="filter-search">
           <Search size={17} />
           <input
-            placeholder="Buscar funcionário ou centro de custo"
+            placeholder="Buscar solicitações..."
             value={filters.busca}
             onChange={(e) => setFilters({ ...filters, busca: e.target.value })}
           />
         </label>
-        <select
-          value={filters.status}
-          onChange={(e) => setFilters({ ...filters, status: e.target.value })}
-        >
-          <option value="">Todos os status</option>
-          {statusOptions.map(({ value, label }) => (
-            <option value={value} key={value}>
-              {label}
-            </option>
-          ))}
-        </select>
+        <details className="status-filter">
+          <summary>{resumoStatusSolicitacao(filters.status)}</summary>
+          <div className="status-filter-menu">
+            <label className="status-filter-all">
+              <input
+                type="checkbox"
+                checked={filters.status.length === solicitacaoStatusOptions.length}
+                onChange={() => setFilters({ ...filters, status: todosStatusSolicitacao.slice() })}
+              />
+              Selecionar todos
+            </label>
+            {solicitacaoStatusOptions.map(({ value, label }) => (
+              <label key={value}>
+                <input
+                  type="checkbox"
+                  checked={filters.status.includes(value)}
+                  onChange={() => setFilters({
+                    ...filters,
+                    status: filters.status.includes(value)
+                      ? filters.status.filter((status) => status !== value)
+                      : [...filters.status, value],
+                  })}
+                />
+                {label}
+              </label>
+            ))}
+            <button type="button" className="btn-link" onClick={() => setFilters({ ...filters, status: [] })}>Limpar</button>
+          </div>
+        </details>
         <select
           value={filters.motivo}
           onChange={(e) => alterarMotivo(e.target.value)}
@@ -896,26 +894,6 @@ export function Solicitacoes({
           <option value="reprovada">Reprovadas</option>
           <option value="dispensada">Dispensadas</option>
         </select>}
-        <select
-          value={imprevistoAtivo ? "true" : ""}
-          onChange={(e) => alterarImprevisto(e.target.value === "true")}
-        >
-          <option value="">Todos os registros</option>
-          <option value="true">Somente imprevistos</option>
-        </select>
-        <select
-          value={filters.funcionario}
-          onChange={(e) =>
-            setFilters({ ...filters, funcionario: e.target.value })
-          }
-        >
-          <option value="">Todos os funcionários</option>
-          {funcionarios.map((x) => (
-            <option value={chaveColaboradorCatalogo(x)} key={chaveColaboradorCatalogo(x)}>
-              {x.nome}
-            </option>
-          ))}
-        </select>
         <select
           value={filters.obra}
           onChange={(e) => setFilters({ ...filters, obra: e.target.value })}

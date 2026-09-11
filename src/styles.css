@@ -57,3 +57,18 @@ header{height:78px;background:var(--brand-card);border-bottom:1px solid var(--br
 .operational-fields{border:1px solid var(--brand-border);border-left:4px solid var(--brand-blue);border-radius:10px;display:grid;gap:14px;grid-template-columns:repeat(2,minmax(0,1fr));padding:16px}.operational-fields h3{grid-column:1/-1;margin:0}.operational-fields label{display:flex;flex-direction:column;gap:7px}@media(max-width:650px){.operational-fields{grid-template-columns:1fr}}
 
 .pdf-drop-zone:has(input:focus-visible){outline:3px solid var(--brand-blue);outline-offset:3px}
+
+/* Filtros de Solicitações */
+.solicitacoes-filters .filter-search{flex:1 1 320px;min-width:280px}
+.status-filter{min-width:150px;position:relative}
+.status-filter summary{align-items:center;background:#fff;border:1px solid var(--brand-border);border-radius:7px;cursor:pointer;display:flex;justify-content:space-between;list-style:none;padding:10px 11px;white-space:nowrap}
+.status-filter summary::-webkit-details-marker{display:none}
+.status-filter summary:after{color:var(--brand-muted);content:'▾';font-size:10px;margin-left:12px}
+.status-filter[open] summary{border-color:var(--brand-blue);box-shadow:0 0 0 3px #4496c924}
+.status-filter-menu{background:#fff;border:1px solid var(--brand-border);border-radius:9px;box-shadow:0 10px 30px #1a1a1a24;display:grid;gap:2px;left:0;min-width:210px;padding:8px;position:absolute;top:calc(100% + 6px);z-index:20}
+.filters .status-filter-menu label{align-items:center;border:0;border-radius:5px;cursor:pointer;display:flex;flex:none;gap:9px;padding:7px 8px}
+.filters .status-filter-menu label:hover{background:#f3f7f9}
+.filters .status-filter-menu input{accent-color:var(--brand-blue);height:15px;width:15px}
+.filters .status-filter-menu .status-filter-all{border-bottom:1px solid var(--brand-border);border-radius:0;font-weight:600;margin-bottom:3px}
+.status-filter-menu .btn-link{justify-self:start;margin:5px 8px 3px}
+@media(max-width:650px){.solicitacoes-filters .filter-search{flex-basis:auto;min-width:0}.status-filter{width:100%}.status-filter-menu{margin-top:6px;position:static}}
