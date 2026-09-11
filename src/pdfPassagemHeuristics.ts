@@ -134,24 +134,68 @@ function labelledMoney(text: string, labels: string[], stops: string[]) {
 const moneyTokenPattern =
   "(?:R\\s*\\$\\s*)?\\d{1,3}(?:\\.\\d{3})*[.,]\\s*\\d{2}";
 
-function tabularFinancialTotal(text: string) {
-  const header = /\bTarifa\b\s+\bTaxas?\b\s+\bTotal\b/i;
-  const match = header.exec(text);
-  if (!match) return { present: false, value: "" };
+const financialTableHeaders = [
+  { key: "tarifa", pattern: /^Tarifa\b/i },
+  { key: "taxas", pattern: /^Taxas?\b/i },
+  { key: "rav", pattern: /^RAV\b/i },
+  { key: "fee", pattern: /^Fee\b/i },
+  { key: "imposto", pattern: /^Impostos?\b/i },
+  { key: "encargo", pattern: /^Encargos?\b/i },
+  { key: "servico", pattern: /^Servi[cç]os?\b/i },
+  { key: "seguro", pattern: /^Seguro\b/i },
+  { key: "bagagem", pattern: /^Bagagem\b/i },
+  { key: "desconto", pattern: /^Desconto\b/i },
+  { key: "total", pattern: /^Total\b/i },
+];
 
-  // The values are associated by position with the three semantic headers.
-  // Requiring a complete, adjacent row prevents a partial table from making
-  // "Total" consume the tariff (the first value after the header row).
-  const values = text.slice(match.index + match[0].length).match(
-    new RegExp(
-      `^\\s*(${moneyTokenPattern})\\s+(${moneyTokenPattern})\\s+(${moneyTokenPattern})(?=\\s|$)`,
-      "i",
-    ),
+function readFinancialTable(section: string) {
+  const headers: string[] = [];
+  let remaining = section.trimStart();
+  while (headers.length < 12) {
+    const header = financialTableHeaders.find(({ pattern }) => pattern.test(remaining));
+    if (!header) break;
+    const label = remaining.match(header.pattern)?.[0] || "";
+    headers.push(header.key);
+    remaining = remaining.slice(label.length).trimStart();
+  }
+
+  const totalIndexes = headers.flatMap((header, index) =>
+    header === "total" ? [index] : []
   );
-  return {
-    present: true,
-    value: values ? parseMoney(values[3]) : "",
-  };
+  if (headers.length < 3 || !headers.includes("tarifa") || totalIndexes.length !== 1)
+    return "";
+
+  const cells: string[] = [];
+  for (let index = 0; index < headers.length; index += 1) {
+    const cellMatch = remaining.match(
+      new RegExp(`^\\s*(--|${moneyTokenPattern})(?=\\s|$)`, "i"),
+    );
+    if (!cellMatch) return "";
+    cells.push(cellMatch[1]);
+    remaining = remaining.slice(cellMatch[0].length);
+  }
+  return cells[totalIndexes[0]] === "--" ? "" : parseMoney(cells[totalIndexes[0]]);
+}
+
+function tabularFinancialTotal(text: string) {
+  const tarifamento = /\bTarifamento\b/i.exec(text);
+  if (tarifamento) {
+    return {
+      present: true,
+      value: readFinancialTable(
+        text.slice(tarifamento.index + tarifamento[0].length),
+      ),
+    };
+  }
+
+  // Compatibility with tables whose extraction omits the section title.
+  const legacyHeader = /\bTarifa\b\s+\bTaxas?\b\s+\bTotal\b/i.exec(text);
+  return legacyHeader
+    ? {
+        present: true,
+        value: readFinancialTable(text.slice(legacyHeader.index)),
+      }
+    : { present: false, value: "" };
 }
 
 function extractFinancialValues(
@@ -174,12 +218,12 @@ function extractFinancialValues(
   const tabular = tabularFinancialTotal(text);
   const currency = [...text.matchAll(/R\s*\$\s*\d[\d.\s]*[.,]\s*\d{2}/gi)]
     .map((match) => parseMoney(match[0])).filter(Boolean).map(Number);
-  const candidates = officialTicket && payable.length
-    ? payable
-    : tabular.value
-      ? [Number(tabular.value)]
-      : tabular.present
-        ? []
+  const candidates = tabular.value
+    ? [Number(tabular.value)]
+    : tabular.present
+      ? []
+      : officialTicket && payable.length
+        ? payable
     : explicitTotal.length
       ? explicitTotal
       : payable.length

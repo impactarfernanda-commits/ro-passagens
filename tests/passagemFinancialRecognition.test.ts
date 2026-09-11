@@ -20,17 +20,31 @@ test("Subtotal isolado não é classificado como Total", () => {
   assert.notEqual(result.valor_passagem, "1865.56");
 });
 
-test("eticket tabular associa Total à terceira coluna sem depender de R$ ou espaçamento", () => {
-  for (const text of [
-    "Tarifamento\nTarifa Taxas Total\nR$ 739,72 R$ 580,00 R$ 1.319,72",
-    "Tarifa Taxas Total\n739,72 580,00 1.319,72",
-    "Tarifa    Taxas       Total       R$ 739,72    R$ 580,00      R$ 1.319,72",
-    "Tarifa\tTaxas\tTotal\t739,72\t580,00\t1.319,72",
-  ]) {
+test("eticket tabular localiza Total semanticamente em quantidade variável de colunas", () => {
+  for (const [text, expected] of [
+    ["Tarifamento\nTarifa Taxas Total\nR$ 739,72 R$ 580,00 R$ 1.319,72", "1319.72"],
+    ["Tarifamento Tarifa Taxas RAV Total 1.000,00 20,00 30,00 1.050,00", "1050.00"],
+    ["Tarifamento\nTarifa Taxas RAV Fee Total\nR$ 2.994,97 R$ 55,17 R$ 30,00 -- R$ 3.080,14", "3080.14"],
+    ["Tarifamento\tTarifa\tTaxas\tRAV\tFee\tTotal\t2.994,97\t55,17\t30,00\t--\t3.080,14", "3080.14"],
+  ] as const) {
     const result = extractTicketDataFromText(text, "eticket-sanitizado.pdf");
-    assert.equal(result.valor_passagem, "1319.72");
-    assert.notEqual(result.valor_passagem, "739.72");
+    assert.equal(result.valor_passagem, expected);
   }
+});
+
+test("fixture GOL preserva Fee vazio e usa Total do Tarifamento", () => {
+  const result = extractTicketDataFromText(
+    [
+      "Tarifamento",
+      "Tarifa Taxas RAV Fee Total",
+      "R$ 2.994,97 R$ 55,17 R$ 30,00 -- R$ 3.080,14",
+      "Pagamento Faturado: Tarifa 2.994,97 Taxas 55,17 Total 3.050,14",
+      "RAV 30,00 Total 30,00",
+    ].join("\n"),
+    "eticket-gol-sanitizado.pdf",
+  );
+  assert.equal(result.valor_passagem, "3080.14");
+  assert.notEqual(result.valor_passagem, "2994.97");
 });
 
 test("tabela financeira incompleta falha fechado", () => {
