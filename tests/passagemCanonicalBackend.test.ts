@@ -14,8 +14,7 @@ test("frontend envia identidade estrutural em cada custo de passagem", () => {
   assert.match(page, /p_custos:\s*custom|p_custos:\s*custos/);
 });
 
-test("metadado de agrupamento acompanha os documentos sem criar custo próprio", () => {
-  assert.match(page, /compra_chave:\s*agrupamento\?\.compraChave/);
+test("valor canônico acompanha somente o documento financeiro do agrupamento", () => {
   assert.match(page, /documento\.id === grupo\.financialDocumentId \? grupo\.value : 0/);
 });
 

@@ -43,6 +43,7 @@ import { extractTicketDataFromPdf } from "./pdfPassagem";
 import { calcularCustosSemDuplicidade } from "./passagemGrouping";
 import { deduplicateNotifications } from "./notifications";
 import { buildPurchaseCosts, totalTicketValues } from "./purchaseCosts";
+import { buildPurchaseAttachmentInsert } from "./purchaseAttachmentPayload";
 import { supabase } from "./supabase";
 import { isRateLimitError, PASSWORD_MIN_LENGTH, PASSWORD_RECOVERY_MESSAGE, PASSWORD_RECOVERY_REDIRECT } from "./auth";
 import { calcularDataMinima, canExcepcionarPrazo, categoriaDocumento, dataMinimaDoInput, limparDataIdaInvalida, mensagemAntecedencia, motivoAoSelecionarFuncionario, motivoPermiteExcecaoPrazo, motivosPermitidos, regraPrazo } from "./passagemRules";
@@ -2718,32 +2719,25 @@ function Compra({
           tamanho_bytes: pdf.file.size,
           partida_em: pdf.partida_em
             ? new Date(pdf.partida_em).toISOString()
-            : "",
-          valor: valorFinanceiro || "",
-          compra_chave: agrupamento?.compraChave || "",
+            : null,
+          valor: valorFinanceiro || null,
           observacao: [notaAgrupamento, pdf.observacao.trim()]
             .filter(Boolean)
-            .join(" "),
+            .join(" ") || null,
         };
         if (complementar) anexosComplementares.push({...metadata, centro_custo_id: form.centro_custo_id});
         else {
           const attachment = await supabase
             .from("ro_passagem_anexos")
-            .insert({
-              solicitacao_id: row.id,
-              tipo: "passagem_pdf",
-              ...metadata,
-              uploaded_by: user.id,
-              partida_em: metadata.partida_em || null,
-              valor: metadata.valor ? Number(metadata.valor) : null,
-              observacao: metadata.observacao || null,
-            })
+            .insert(buildPurchaseAttachmentInsert(row.id, user.id, metadata))
             .select("id")
             .single();
-          if (attachment.error || !attachment.data)
+          if (attachment.error || !attachment.data) {
+            console.error("Falha ao vincular PDF à solicitação", attachment.error);
             throw new Error(
               "Não foi possível vincular " + pdf.file.name + " à solicitação.",
             );
+          }
           anexoIds.push(attachment.data.id);
         }
       }
