@@ -52,7 +52,8 @@ import { motivoPossuiRetorno, normalizarCamposRetorno } from "./retornoRules";
 import { formatCityUf, normalizeNeighborhoodForDisplay, normalizeStreetForDisplay, parseCityUf } from "./collaboratorDisplay";
 import { currentCostCenterPrefill } from "./collaboratorCostCenter";
 import { idsSolicitacoesParaResolver, mapearNomesColaboradoresSolicitacoes, resolveSolicitacaoFuncionarioNome, solicitacaoCorrespondeBuscaPessoa } from "./solicitacaoColaborador";
-import { resumoStatusSolicitacao, solicitacaoStatusOptions, statusPertenceAoFiltro, todosStatusSolicitacao, type SolicitacaoStatusFilter } from "./solicitacoesFilters";
+import { resumoStatusSolicitacao, solicitacaoStatusOptions, statusPertenceAoFiltro, todosStatusSolicitacao } from "./solicitacoesFilters";
+import { normalizeSolicitacoesFilters, readSolicitacoesFilters, writeSolicitacoesFilters, type SolicitacoesFilters } from "./solicitacoesFilterPersistence";
 import { CostCenterCombobox } from "./CostCenterCombobox";
 import { draftPrivateRef, emptyNovaSolicitacaoForm, hasDraftContent, NOVA_SOLICITACAO_DRAFT_MAX_AGE_MS, novaSolicitacaoDraftKey, parseDraft, serializeDraft, validateDraftCatalogIds, type NovaSolicitacaoDraftData, type NovaSolicitacaoDraftDocument } from "./novaSolicitacaoDraft";
 import { cleanupExpiredDraftPrivate, deleteDraftPrivate, readDraftPrivate, removeDraftDocument, saveDraftDocument, saveDraftPix } from "./novaSolicitacaoDraftPrivate";
@@ -734,24 +735,25 @@ export function Solicitacoes({
   userId: string;
   approvalsOnly?: boolean;
 }) {
-  const { obras } = useCatalogos();
+  const { obras, ready: catalogosReady } = useCatalogos();
   const [searchParams, setSearchParams] = useSearchParams();
   const motivoParam = searchParams.get("motivo");
-  const motivoInicial =
-    motivoParam && motivoParam in motivoLabel ? motivoParam : "";
+  const motivoInicial = motivoParam && motivoParam in motivoLabel ? motivoParam as Motivo : null;
   const mostrandoExcluidas = access.canOperateRO && searchParams.get("excluidas") === "true";
   const [rows, setRows] = useState<Solicitacao[]>([]);
   const [userLabels, setUserLabels] = useState<Record<string, string>>({});
   const [nomesFuncionarios, setNomesFuncionarios] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
   const [approvalView, setApprovalView] = useState<"pending" | "history">("pending");
-  const [filters, setFilters] = useState({
-    status: todosStatusSolicitacao as SolicitacaoStatusFilter[],
-    aprovacao: "" as ApprovalFilter,
-    motivo: motivoInicial,
-    obra: "",
-    busca: "",
+  const filtersChanged = useRef(false);
+  const [filters, setFilters] = useState<SolicitacoesFilters>(() => {
+    const saved = readSolicitacoesFilters(userId);
+    return motivoInicial ? { ...saved, motivo: motivoInicial } : saved;
   });
+  const updateFilters = (update: SolicitacoesFilters | ((current: SolicitacoesFilters) => SolicitacoesFilters)) => {
+    filtersChanged.current = true;
+    setFilters(update);
+  };
   const responsavelId = (r: Solicitacao) =>
     (r as Solicitacao & { responsavel_ro_id?: string | null })
       .responsavel_ro_id;
@@ -803,13 +805,20 @@ export function Solicitacoes({
   }, [load]);
   useEffect(() => {
     const motivo = searchParams.get("motivo");
-    setFilters((current) => ({
-      ...current,
-      motivo: motivo && motivo in motivoLabel ? motivo : "",
-    }));
+    if (motivo && motivo in motivoLabel) updateFilters((current) => ({ ...current, motivo: motivo as Motivo }));
   }, [searchParams]);
+  useEffect(() => {
+    if (!catalogosReady || !filters.obra) return;
+    const normalized = normalizeSolicitacoesFilters(filters, new Set(obras.map(({ id }) => id)));
+    if (normalized.obra !== filters.obra) updateFilters(normalized);
+  }, [catalogosReady, filters, obras]);
+  useEffect(() => {
+    if (!filtersChanged.current) return;
+    const timeout = window.setTimeout(() => writeSolicitacoesFilters(userId, filters), 200);
+    return () => window.clearTimeout(timeout);
+  }, [filters, userId]);
   function alterarMotivo(motivo: string) {
-    setFilters({ ...filters, motivo });
+    updateFilters({ ...filters, motivo: motivo as Motivo | "" });
     setSearchParams(
       (current) => {
         const next = new URLSearchParams(current);
@@ -855,7 +864,7 @@ export function Solicitacoes({
           <input
             placeholder="Buscar solicitações..."
             value={filters.busca}
-            onChange={(e) => setFilters({ ...filters, busca: e.target.value })}
+            onChange={(e) => updateFilters({ ...filters, busca: e.target.value })}
           />
         </label>
         <details className="status-filter">
@@ -865,7 +874,7 @@ export function Solicitacoes({
               <input
                 type="checkbox"
                 checked={filters.status.length === solicitacaoStatusOptions.length}
-                onChange={() => setFilters({ ...filters, status: todosStatusSolicitacao.slice() })}
+                onChange={() => updateFilters({ ...filters, status: todosStatusSolicitacao.slice() })}
               />
               Selecionar todos
             </label>
@@ -874,7 +883,7 @@ export function Solicitacoes({
                 <input
                   type="checkbox"
                   checked={filters.status.includes(value)}
-                  onChange={() => setFilters({
+                  onChange={() => updateFilters({
                     ...filters,
                     status: filters.status.includes(value)
                       ? filters.status.filter((status) => status !== value)
@@ -884,7 +893,7 @@ export function Solicitacoes({
                 {label}
               </label>
             ))}
-            <button type="button" className="btn-link" onClick={() => setFilters({ ...filters, status: [] })}>Limpar</button>
+            <button type="button" className="btn-link" onClick={() => updateFilters({ ...filters, status: [] })}>Limpar</button>
           </div>
         </details>
         <select
@@ -901,7 +910,7 @@ export function Solicitacoes({
         {!approvalsOnly && <select
           aria-label="Filtrar por aprovação"
           value={filters.aprovacao}
-          onChange={(e) => setFilters({ ...filters, aprovacao: e.target.value as ApprovalFilter })}
+          onChange={(e) => updateFilters({ ...filters, aprovacao: e.target.value as ApprovalFilter })}
         >
           <option value="">Todas as aprovações</option>
           <option value="pendente">Pendentes</option>
@@ -911,7 +920,7 @@ export function Solicitacoes({
         </select>}
         <select
           value={filters.obra}
-          onChange={(e) => setFilters({ ...filters, obra: e.target.value })}
+          onChange={(e) => updateFilters({ ...filters, obra: e.target.value })}
         >
           <option value="">Todas as obras</option>
           {obras.map((x) => (

@@ -163,10 +163,10 @@ export function App() {
                 <Route
                   path="/solicitacoes"
                   element={
-                    <Solicitacoes access={access} userId={session.user.id} />
+                    <Solicitacoes key={session.user.id} access={access} userId={session.user.id} />
                   }
                 />
-                <Route path="/minhas-aprovacoes" element={access.canApprove ? <Solicitacoes access={access} userId={session.user.id} approvalsOnly /> : <Navigate to="/solicitacoes" replace />} />
+                <Route path="/minhas-aprovacoes" element={access.canApprove ? <Solicitacoes key={session.user.id} access={access} userId={session.user.id} approvalsOnly /> : <Navigate to="/solicitacoes" replace />} />
                 <Route
                   path="/relatorios"
                   element={
