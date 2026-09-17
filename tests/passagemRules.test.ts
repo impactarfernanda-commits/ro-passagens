@@ -2,6 +2,9 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { calcularDataMinima, calendarYearsToInvalidate, categoriaDocumento, dataMinimaDoInput, getPrimeiroEmbarque, isFernandaAdmin, limparDataIdaInvalida, mensagemAntecedencia, motivoAoSelecionarFuncionario, motivoPermiteExcecaoPrazo, motivosPermitidos, regraPrazo, validarSolicitacao, type ValidacaoInput } from "../src/passagemRules.ts";
 import { validatePdfFile, validatePdfSignature } from "../src/pdfFileValidation.ts";
+import { dispensaAprovacaoDesligamentoUrgente } from "../src/approvalRules.ts";
+import { motivoLabel } from "../src/lib.ts";
+import { emptyNovaSolicitacaoForm, parseDraft, serializeDraft } from "../src/novaSolicitacaoDraft.ts";
 
 const sp=(value:string)=>new Date(`${value}-03:00`);
 const anos2026=[{ano:2026,completo:true}];
@@ -17,6 +20,7 @@ for(const [nome,motivo,subtipo,tipo,quantidade] of [
   ["justa causa","desligamento","justa_causa","sem_prazo_minimo",0],
   ["pedido de demissão","desligamento","pedido_demissao","sem_prazo_minimo",0],
   ["viagem administrativa","viagem_administrativa",null,"sem_prazo_minimo",0],
+  ["afastamento","afastamento",null,"sem_prazo_minimo",0],
 ] as const)test(`prazo: ${nome}`,()=>{const r=regraPrazo(motivo,subtipo);assert.equal(r.tipo,tipo);assert.equal(r.quantidade,quantidade);});
 
 test("dias corridos 04/08/2026 + 25 = 29/08/2026",()=>assert.equal(calcularDataMinima(sp("2026-08-04T12:00:00"),"dias_corridos",25).data,"2026-08-29"));
@@ -39,8 +43,11 @@ test("usuário comum não vê admissão e vê recesso",()=>{const r=motivosPermi
 test("RH ativo vê somente três motivos",()=>assert.deepEqual(motivosPermitidos("assistente",true),["admissao","desligamento","inicio_obra"]));
 test("RH inativo volta às permissões comuns",()=>assert.equal(motivosPermitidos("assistente",false).includes("admissao"),false));
 test("RO sem RH não recebe admissão",()=>assert.equal(motivosPermitidos("coordenador",false).includes("admissao"),false));
-test("gerente vê todos os motivos de criação",()=>assert.equal(motivosPermitidos("gerente",false).length,9));
-test("diretor vê todos e não vê viagem diretoria",()=>{const r=motivosPermitidos("diretor",false);assert.equal(r.length,9);assert.equal(r.includes("viagem_diretoria"),false);});
+test("gerente vê todos os motivos de criação",()=>assert.equal(motivosPermitidos("gerente",false).length,10));
+test("diretor vê todos e não vê viagem diretoria",()=>{const r=motivosPermitidos("diretor",false);assert.equal(r.length,10);assert.equal(r.includes("viagem_diretoria"),false);});
+test("afastamento aparece para solicitante comum sem ampliar motivos do RH",()=>{assert.ok(motivosPermitidos("assistente",false).includes("afastamento"));assert.ok(!motivosPermitidos("assistente",true).includes("afastamento"));});
+test("afastamento exige justificativa útil e permite viagem hoje",()=>{for(const observacoesSolicitante of ["", "   "])assert.ok(validar({motivo:"afastamento",dataIda:"2026-08-03",observacoesSolicitante}).bloqueios.includes("JUSTIFICATIVA_AFASTAMENTO_OBRIGATORIA"));const r=validar({motivo:"afastamento",dataIda:"2026-08-03",observacoesSolicitante:"Licença-paternidade"});assert.deepEqual(r.bloqueios,[]);assert.equal(r.foraDoPrazo,false);assert.equal(motivoPermiteExcecaoPrazo("afastamento"),false);});
+test("afastamento usa aprovação comum, rótulo canônico e preserva justificativa no rascunho",()=>{assert.equal(dispensaAprovacaoDesligamentoUrgente("afastamento",null),false);assert.equal(motivoLabel.afastamento,"Afastamento");const form={...emptyNovaSolicitacaoForm(),motivo:"afastamento" as const,observacoes_solicitante:"Licença-paternidade"};const raw=serializeDraft({form,solicitarExcecao:false,destinoDiferente:false,justificativaDestino:""},sp("2026-08-03T10:00:00"));const restored=parseDraft(raw,sp("2026-08-03T10:00:00").getTime());assert.equal(restored?.form.motivo,"afastamento");assert.equal(restored?.form.observacoes_solicitante,"Licença-paternidade");});
 test("colaborador sem vínculo explícito recebe viagem administrativa editável",()=>{assert.equal(motivoAoSelecionarFuncionario({funcionario_id:null},""),"viagem_administrativa");assert.equal(motivoAoSelecionarFuncionario({funcionario_id:null},"admissao"),"viagem_administrativa");});
 test("funcionário Obras Control preserva o motivo atual",()=>assert.equal(motivoAoSelecionarFuncionario({funcionario_id:"obras-id"},"inicio_obra"),"inicio_obra"));
 test("default administrativo não impede seleção manual de outros motivos",()=>assert.ok(motivosPermitidos("gerente",false).includes("admissao")&&motivosPermitidos("gerente",false).includes("inicio_obra")));

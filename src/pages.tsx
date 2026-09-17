@@ -1283,6 +1283,10 @@ export function NovaSolicitacao({ userId, access }: { userId: string; access: Ac
       setErro("Selecione o motivo da solicitação.");
       return;
     }
+    if (form.motivo === "afastamento" && !form.observacoes_solicitante.trim()) {
+      setErro("Informe a justificativa do afastamento.");
+      return;
+    }
     if(motivoResidencial&&!destinoDiferente&&!destinoResidencial?.possui_endereco){setErro("Funcionário sem endereço residencial cadastrado pelo RH.");return}
     if(motivoResidencial&&destinoDiferente&&justificativaDestino.trim().length<10){setErro("A justificativa do destino excepcional deve ter pelo menos 10 caracteres.");return}
     if (!form.data_ida || form.data_ida < dataMinimaInput) {
@@ -1523,7 +1527,7 @@ export function NovaSolicitacao({ userId, access }: { userId: string; access: Ac
           </label>
         )}
         <label className="wide">
-          Observações
+          {form.motivo === "afastamento" ? "Justificativa do afastamento *" : "Observações"}
           <textarea
             rows={4}
             value={form.observacoes_solicitante}

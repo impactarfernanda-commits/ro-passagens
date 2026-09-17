@@ -8,7 +8,7 @@ const cors = { "access-control-allow-origin": "*", "access-control-allow-headers
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { ...cors, "content-type": "application/json" } });
 const escapeHtml = (value: unknown) => String(value ?? "").replace(/[&<>'"]/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" })[char]!);
 const formatDate = (value?: string | null) => value ? new Intl.DateTimeFormat("pt-BR", { dateStyle: "short", timeStyle: value.includes("T") ? "short" : undefined, timeZone: "America/Sao_Paulo" }).format(new Date(value.includes("T") ? value : `${value}T12:00:00-03:00`)) : "—";
-const labelMotivo = (value?: string | null) => value ? ({ ferias: "Férias", folga_campo: "Folga de campo", desligamento: "Desligamento", transferencia_obra: "Transferência de obra", admissao: "Admissão", inicio_obra: "Início na obra", retorno_obra: "Retorno à obra", viagem_diretoria: "Viagem diretoria" }[value] || value) : "Não se aplica";
+const labelMotivo = (value?: string | null) => value ? ({ ferias: "Férias", folga_campo: "Folga de campo", desligamento: "Desligamento", transferencia_obra: "Transferência de obra", admissao: "Admissão", inicio_obra: "Início na obra", retorno_obra: "Retorno à obra", viagem_diretoria: "Viagem diretoria", afastamento: "Afastamento" }[value] || value) : "Não se aplica";
 const centroLabel = (centro?: { codigo?: string | null; nome?: string | null; descricao?: string | null } | null) => {
   if (!centro) return "—";
   const nome = (centro.nome || centro.descricao || "").trim().toLocaleUpperCase("pt-BR");

@@ -8,10 +8,11 @@ export type ValidacaoInput = {
   motivo: Motivo | null; desligamentoSubtipo?: DesligamentoSubtipo | null; role: string | null; isRh: boolean;
   dataIda: string | null; agora: Date; diasNaoUteis?: DiaNaoUtil[]; anos?: CalendarioAno[];
   solicitarExcecao?: boolean; justificativa?: string; documentos?: DocumentoInternoInput[];
+  observacoesSolicitante?: string;
   canUseAdministrativeNull?: boolean;
 };
 export const RH_MOTIVOS: Motivo[] = ["admissao", "desligamento", "inicio_obra"];
-export const MOTIVOS_CRIACAO: Motivo[] = ["ferias", "folga_campo", "desligamento", "transferencia_obra", "admissao", "inicio_obra", "retorno_obra", "recesso", "viagem_administrativa"];
+export const MOTIVOS_CRIACAO: Motivo[] = ["ferias", "folga_campo", "desligamento", "transferencia_obra", "admissao", "inicio_obra", "retorno_obra", "recesso", "viagem_administrativa", "afastamento"];
 
 export const isGerencial = (role: string | null) => role === "gerente" || role === "diretor";
 export const canExcepcionarPrazo = (role: string | null) => role === "coordenador" || isGerencial(role);
@@ -35,7 +36,7 @@ export function regraPrazo(motivo: Motivo | null, subtipo?: DesligamentoSubtipo 
   const regras: Partial<Record<Motivo, [PrazoTipo, number]>> = {
     ferias: ["dias_corridos", 25], folga_campo: ["dias_corridos", 15], transferencia_obra: ["dias_corridos", 15],
     admissao: ["dias_corridos", 15], retorno_obra: ["dias_corridos", 15], inicio_obra: ["dias_uteis", 5], recesso: ["dias_corridos", 30],
-    viagem_administrativa: ["sem_prazo_minimo", 0],
+    viagem_administrativa: ["sem_prazo_minimo", 0], afastamento: ["sem_prazo_minimo", 0],
   };
   const [tipo, quantidade] = regras[motivo || "viagem_diretoria"] || ["sem_prazo_minimo", 0];
   return { codigo: motivo || "administrativo", tipo, quantidade };
@@ -103,6 +104,7 @@ export function validarSolicitacao(input: ValidacaoInput) {
   if (input.motivo==="viagem_diretoria" || (input.motivo && !motivosPermitidos(input.role,input.isRh).includes(input.motivo))) bloqueios.push("MOTIVO_NAO_PERMITIDO");
   if(input.motivo==="desligamento"&&!input.desligamentoSubtipo)bloqueios.push("SUBTIPO_DESLIGAMENTO_OBRIGATORIO");
   if(input.motivo!=="desligamento"&&input.desligamentoSubtipo)bloqueios.push("SUBTIPO_DESLIGAMENTO_INVALIDO");
+  if(input.motivo==="afastamento"&&!input.observacoesSolicitante?.trim())bloqueios.push("JUSTIFICATIVA_AFASTAMENTO_OBRIGATORIA");
   const hoje=calcularDataMinima(input.agora,"sem_prazo_minimo",0).data;
   const dataIda=input.dataIda||"";
   if(!/^\d{4}-\d{2}-\d{2}$/.test(dataIda))bloqueios.push("DATA_IDA_OBRIGATORIA"); else if(dataIda<hoje)bloqueios.push("DATA_IDA_NO_PASSADO");

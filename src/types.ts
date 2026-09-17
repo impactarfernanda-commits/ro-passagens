@@ -8,7 +8,8 @@ export type Motivo =
   | "retorno_obra"
   | "recesso"
   | "viagem_diretoria"
-  | "viagem_administrativa";
+  | "viagem_administrativa"
+  | "afastamento";
 export type DesligamentoSubtipo = "programado_outros" | "justa_causa" | "pedido_demissao" | "ma_conduta";
 export type Status =
   | "solicitada"

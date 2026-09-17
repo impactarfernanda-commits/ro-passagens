@@ -47,6 +47,14 @@ test("restaura busca, Motivo, Aprovação e Obra", () => {
   assert.equal(restored.obra, "obra-1");
 });
 
+test("Afastamento persiste como filtro e JSON antigo continua válido", () => {
+  const storage = new MemoryStorage();
+  writeSolicitacoesFilters("u-afastamento", { ...defaultSolicitacoesFilters(), motivo: "afastamento" }, storage);
+  assert.equal(readSolicitacoesFilters("u-afastamento", storage).motivo, "afastamento");
+  storage.setItem(solicitacoesFiltersKey("u-antigo"), JSON.stringify({ version: 1, filters: { ...customized } }));
+  assert.equal(readSolicitacoesFilters("u-antigo", storage).motivo, "ferias");
+});
+
 test("chave e conteúdo são isolados por usuário", () => {
   const storage = new MemoryStorage();
   writeSolicitacoesFilters("u1", { ...customized, status: [...customized.status] }, storage);

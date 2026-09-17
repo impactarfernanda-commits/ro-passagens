@@ -17,7 +17,7 @@ const KEY_PREFIX = "ro-passagens:solicitacoes-filtros:v1:";
 const validStatuses = new Set<string>(solicitacaoStatusOptions.map(({ value }) => value));
 const validMotivos = new Set<string>([
   "ferias", "folga_campo", "desligamento", "transferencia_obra", "admissao",
-  "inicio_obra", "retorno_obra", "recesso", "viagem_diretoria", "viagem_administrativa",
+  "inicio_obra", "retorno_obra", "recesso", "viagem_diretoria", "viagem_administrativa", "afastamento",
 ]);
 const validApprovals = new Set<string>(["", "pendente", "aprovada", "reprovada", "dispensada"]);
 
