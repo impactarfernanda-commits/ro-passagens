@@ -268,6 +268,20 @@ function extractIdentifierTokens(text: string) {
   )];
 }
 
+function extractLocator(text: string, fileName: string) {
+  const structural = new Set([
+    "RESERVA", "LOCALIZADOR", "CODIGO", "CÓDIGO", "BILHETE",
+    "PASSAGEIRO", "ORIGEM", "DESTINO", "DATA", "VOO", "VÔO",
+  ]);
+  const labelled = [...text.matchAll(
+    /\b(?:Localizador(?:\s+(?:da|de)\s+Reserva)?|C[oó]digo\s+de\s+reserva|Reserva)\b\s*[:#-]?\s*([A-Z0-9-]{4,})/gi,
+  )].map((match) => match[1]).filter((candidate) =>
+    !structural.has(candidate.toUpperCase())
+  );
+  if (labelled.length) return labelled.at(-1) || "";
+  return /^reserva[_-]([a-z0-9-]{4,12})\.pdf$/i.exec(fileName)?.[1] || "";
+}
+
 function extractRouteFromFilename(fileName: string, passenger: string) {
   const marked = fileName
     .replace(/\.pdf$/i, "")
@@ -331,9 +345,7 @@ export function extractTicketDataFromText(
     const poltrona = captures(text, ["Poltrona", "Assento"], stops)
       .map((value) => value.match(/\b\d{1,3}[A-Z]?\b/i)?.[0] || "")
       .find(Boolean) || "";
-    const localizador = labelled([
-      "Localizador", "C[oó]digo\\s+de\\s+reserva", "Reserva",
-    ]).match(/[A-Z0-9-]{4,}/i)?.[0] || "";
+    const localizador = extractLocator(text, fileName);
     const numeroBilheteCandidate = labelled([
       "N[uú]mero\\s+do\\s+comprovante", "Comprovante",
       "N[uú]mero\\s+do\\s+bilhete", "Bilhete",
