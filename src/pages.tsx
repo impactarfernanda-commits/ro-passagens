@@ -987,7 +987,7 @@ export function Solicitacoes({
                     {(access.canViewAll || approvalsOnly) && (
                       <td>
                         <span className={`badge approval-${r.aprovacao_status || "dispensada"}`}>
-                          {aprovacaoPendenteAtiva ? "Aguardando aprovação" : r.status === "recusada" ? "Interrompida por recusa RO" : approvalStatusLabel(r.aprovacao_status)}
+                          {aprovacaoPendenteAtiva ? "Aguardando aprovação" : r.aprovacao_status === "reprovada" ? "Reprovada pelo aprovador" : r.status === "recusada" ? "Interrompida por recusa RO" : approvalStatusLabel(r.aprovacao_status)}
                         </span>
                         {aprovacaoPendenteAtiva && <small>{approvalWaitingLabel(r.created_at)}</small>}
                         {r.aprovador_id && <small>{aprovacaoPendenteAtiva ? "Aguardando aprovação de " : "Aprovador: "}{userLabels[r.aprovador_id] || "Aprovador sem identificação"}</small>}
@@ -1791,7 +1791,7 @@ export function Detalhe({ access, userId }: { access: Access; userId: string }) 
       <div className="detail-head">
         <StatusBadge status={statusLabel[row.status]} />
         <span className={`badge approval-${row.aprovacao_status || "dispensada"}`}>
-          {aprovacaoPendenteAtiva ? "Aguardando aprovação" : row.status === "recusada" ? "Interrompida por recusa RO" : approvalStatusLabel(row.aprovacao_status)}
+          {aprovacaoPendenteAtiva ? "Aguardando aprovação" : row.aprovacao_status === "reprovada" ? "Reprovada pelo aprovador" : row.status === "recusada" ? "Interrompida por recusa RO" : approvalStatusLabel(row.aprovacao_status)}
         </span>
         <span>{formatMotivoLabel(row.motivo)}</span>
         {row.motivo === "desligamento" && (
@@ -1803,7 +1803,7 @@ export function Detalhe({ access, userId }: { access: Access; userId: string }) 
       <section className={`card detail approval-summary${aprovacaoPendenteAtiva ? " approval-summary-pending" : ""}`}>
         <h2>Aprovação</h2>
         <dl>
-          <DT t="Status" v={row.status === "recusada" ? "Interrompida por recusa operacional" : row.aprovacao_status === "reprovada" ? "Reprovada na aprovação" : approvalStatusLabel(row.aprovacao_status)} />
+          <DT t="Status" v={row.aprovacao_status === "reprovada" ? "Reprovada na aprovação" : row.status === "recusada" ? "Interrompida por recusa operacional" : approvalStatusLabel(row.aprovacao_status)} />
           <DT t="Aprovador" v={(row as Solicitacao & {aprovador_nome?: string | null}).aprovador_nome || (row.aprovacao_status === "dispensada" || !row.aprovacao_status ? "Dispensada por regra do fluxo" : "Aprovador sem identificação")} />
           {aprovacaoPendenteAtiva && <DT t="Tempo aguardando" v={approvalWaitingLabel(row.created_at)} />}
           {row.aprovacao_status === "aprovada" && <DT t="Aprovada em" v={dataHora(row.aprovado_em)} />}
@@ -1811,7 +1811,7 @@ export function Detalhe({ access, userId }: { access: Access; userId: string }) 
         </dl>
       </section>
       {row.excluida_em && <section className="card rejection-summary"><h2>Solicitação excluída</h2><DT t="Excluída por" v={(row as Solicitacao & {excluida_por_nome?:string|null}).excluida_por_nome}/><DT t="Data da exclusão" v={dataHora(row.excluida_em)}/><DT t="Motivo" v={row.motivo_exclusao}/></section>}
-      {row.status === "recusada" && <section className="card rejection-summary"><h2>Solicitação recusada</h2><DT t="Motivo" v={row.motivo_recusa} /><DT t="Recusada por" v={(row as Solicitacao & {recusada_por_nome?:string|null}).recusada_por_nome} /><DT t="Data" v={dataHora(row.recusada_em)} /></section>}
+      {row.status === "recusada" && row.aprovacao_status !== "reprovada" && <section className="card rejection-summary"><h2>Solicitação recusada</h2><DT t="Motivo" v={row.motivo_recusa} /><DT t="Recusada por" v={(row as Solicitacao & {recusada_por_nome?:string|null}).recusada_por_nome} /><DT t="Data" v={dataHora(row.recusada_em)} /></section>}
       {row.status === "solicitada" && row.aprovador_id === userId && row.aprovacao_status === "pendente" && <AprovacaoIndividual row={row} onDone={load}/>}
       {row.motivo==="folga_campo"&&row.folga_antecipada&&<section className="card cycle-detail"><h2>Antecipação de folga de campo</h2><DT t="Data prevista do ciclo" v={data(row.folga_data_prevista_ciclo)}/><DT t="Data antecipada solicitada" v={data(row.data_ida)}/><DT t="Dias antecipados" v={row.folga_data_prevista_ciclo?String(Math.round((new Date(`${row.folga_data_prevista_ciclo}T12:00:00`).getTime()-new Date(`${row.data_ida}T12:00:00`).getTime())/86400000)):null}/><DT t="Justificativa" v={row.folga_antecipacao_justificativa}/><DT t="Status da análise" v={row.folga_antecipacao_status}/>{row.folga_antecipacao_status==="aprovada"&&<><DT t="Analisada por" v={(row as Solicitacao&{folga_antecipacao_analisada_por_nome?:string|null}).folga_antecipacao_analisada_por_nome}/><DT t="Analisada em" v={dataHora(row.folga_antecipacao_analisada_em)}/></>}{access.canOperateRO&&row.folga_antecipacao_status==="pendente"&&<AprovarAntecipacao row={row} onDone={load}/>}</section>}
       <section className="card detail request-data">
@@ -1962,6 +1962,7 @@ function AcoesOperacionaisBloqueadas({
     <div className={pendente ? "approval-operation-notice pending" : "approval-operation-notice rejected"} role="status">
       <strong>{pendente
         ? `Aguardando aprovação de ${aprovador || "Aprovador sem identificação"}`
+        : row.aprovacao_status === "reprovada" ? "Solicitação reprovada na etapa de aprovação."
         : recusada ? "Solicitação encerrada por recusa operacional."
         : "Solicitação reprovada na etapa de aprovação."}</strong>
       {pendente && <span>As ações operacionais serão liberadas após a aprovação.</span>}
