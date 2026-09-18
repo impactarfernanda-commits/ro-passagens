@@ -53,6 +53,7 @@ import { formatCityUf, normalizeNeighborhoodForDisplay, normalizeStreetForDispla
 import { currentCostCenterPrefill } from "./collaboratorCostCenter";
 import { idsSolicitacoesParaResolver, mapearNomesColaboradoresSolicitacoes, resolveSolicitacaoFuncionarioNome, solicitacaoCorrespondeBuscaPessoa } from "./solicitacaoColaborador";
 import { resumoStatusSolicitacao, solicitacaoStatusOptions, statusPertenceAoFiltro, todosStatusSolicitacao } from "./solicitacoesFilters";
+import { attachStatusFilterDismissal } from "./statusFilterDismissal";
 import { normalizeSolicitacoesFilters, readSolicitacoesFilters, writeSolicitacoesFilters, type SolicitacoesFilters } from "./solicitacoesFilterPersistence";
 import { CostCenterCombobox } from "./CostCenterCombobox";
 import { draftPrivateRef, emptyNovaSolicitacaoForm, hasDraftContent, NOVA_SOLICITACAO_DRAFT_MAX_AGE_MS, novaSolicitacaoDraftKey, parseDraft, serializeDraft, validateDraftCatalogIds, type NovaSolicitacaoDraftData, type NovaSolicitacaoDraftDocument } from "./novaSolicitacaoDraft";
@@ -746,6 +747,7 @@ export function Solicitacoes({
   const [loading, setLoading] = useState(true);
   const [approvalView, setApprovalView] = useState<"pending" | "history">("pending");
   const filtersChanged = useRef(false);
+  const statusFilterRef = useRef<HTMLDetailsElement>(null);
   const [filters, setFilters] = useState<SolicitacoesFilters>(() => {
     const saved = readSolicitacoesFilters(userId);
     return motivoInicial ? { ...saved, motivo: motivoInicial } : saved;
@@ -817,6 +819,9 @@ export function Solicitacoes({
     const timeout = window.setTimeout(() => writeSolicitacoesFilters(userId, filters), 200);
     return () => window.clearTimeout(timeout);
   }, [filters, userId]);
+  useEffect(() => {
+    if (statusFilterRef.current) return attachStatusFilterDismissal(statusFilterRef.current);
+  }, []);
   function alterarMotivo(motivo: string) {
     updateFilters({ ...filters, motivo: motivo as Motivo | "" });
     setSearchParams(
@@ -867,7 +872,7 @@ export function Solicitacoes({
             onChange={(e) => updateFilters({ ...filters, busca: e.target.value })}
           />
         </label>
-        <details className="status-filter">
+        <details className="status-filter" ref={statusFilterRef}>
           <summary>{resumoStatusSolicitacao(filters.status)}</summary>
           <div className="status-filter-menu">
             <label className="status-filter-all">
