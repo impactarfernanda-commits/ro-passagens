@@ -137,6 +137,22 @@ function samePassage(left: PassagemDocument, right: PassagemDocument) {
     : evidence.matches >= 2;
 }
 
+function sameAuthoritativeLocator(
+  left: PassagemDocument,
+  right: PassagemDocument,
+) {
+  const leftLocator = normalized(left.localizador);
+  const rightLocator = normalized(right.localizador);
+  return Boolean(
+    complementaryTypes(left, right) &&
+      leftLocator &&
+      leftLocator === rightLocator &&
+      (!normalized(left.passageiro) ||
+        !normalized(right.passageiro) ||
+        compatibleText(normalized(left.passageiro), normalized(right.passageiro))),
+  );
+}
+
 function complementaryCoverage(
   left: PassagemDocument,
   right: PassagemDocument,
@@ -176,7 +192,9 @@ export function groupPdfDocumentsByPassagem(
   for (const document of documents) {
     const group = groups.find((candidate) =>
       candidate.every(
-        (item) => !passageEvidence(item, document).conflicts,
+        (item) =>
+          sameAuthoritativeLocator(item, document) ||
+          !passageEvidence(item, document).conflicts,
       ) && candidate.some((item) => samePassage(item, document)),
     );
     if (group) group.push(document);

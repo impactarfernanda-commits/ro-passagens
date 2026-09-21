@@ -279,6 +279,8 @@ function extractLocator(text: string, fileName: string) {
     !structural.has(candidate.toUpperCase())
   );
   if (labelled.length) return labelled.at(-1) || "";
+  const numericRoadLocator = text.match(/\b0\d{11}\b/)?.[0];
+  if (numericRoadLocator) return numericRoadLocator;
   return /^reserva[_-]([a-z0-9-]{4,12})\.pdf$/i.exec(fileName)?.[1] || "";
 }
 
