@@ -64,6 +64,7 @@ import { resolveUserLabel } from "./userLabelResolution";
 import { isEditableOperationalCost, isPassageCost, parseOperationalCostValue } from "./operationalCostRules";
 import { approvalStatusLabel, approvalWaitingLabel, isApprovalOperationallyReleased, matchesApprovalFilter, type ApprovalFilter } from "./approvalVisibility";
 import { approvalDecisionErrorMessage } from "./approvalErrorMessages";
+import { creationRequestErrorMessage } from "./creationErrorMessages";
 import { dispensaAprovacaoDesligamentoUrgente } from "./approvalRules";
 import { canShowSolicitacaoDeletion, deletionErrorMessage, normalizeDeletionReason } from "./solicitacaoDeletion";
 import { autoMapHeaders, buildCollaboratorSuggestions, canKeepAsExternal, duplicateCpfRows, formatCpf, formatPhone, isSpreadsheetRows, isValidCpf, matchCollaborator, MAX_RH_XLSX_BYTES, normalizeCpf, normalizePhone, parseBirthDate, possibleMatches, resolveCollaboratorSuggestion, strongAuxiliaryMatches, validUf, type AddressField, type CollaboratorSuggestion, type ColumnMapping, type SpreadsheetRows } from "./addressImport";
@@ -1325,8 +1326,7 @@ export function NovaSolicitacao({ userId, access }: { userId: string; access: Ac
     if (error) {
       if(uploadedPath) await supabase.storage.from("ro-documentos-internos").remove([uploadedPath]);
       if (import.meta.env.DEV) console.error("Falha ao criar solicitação", { message:error.message, code:error.code, details:error.details, hint:error.hint });
-      const motivoInvalido = /MOTIVO_(NAO_PERMITIDO|ADMINISTRATIVO_NAO_PERMITIDO)|motivo.*(check constraint|obrigat)/i.test(`${error.message} ${error.details || ""}`);
-      setErro(error.message.includes("CALENDARIO_INCOMPLETO") ? "O calendário de dias não úteis ainda não foi validado." : motivoInvalido ? "Motivo da solicitação inválido. Selecione novamente o motivo da viagem." : "Não foi possível criar a solicitação. Revise os dados e prazos.");
+      setErro(creationRequestErrorMessage(error));
       setBusy(false);
       return;
     }
