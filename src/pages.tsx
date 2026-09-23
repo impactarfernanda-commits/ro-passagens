@@ -59,7 +59,7 @@ import { CostCenterCombobox } from "./CostCenterCombobox";
 import { draftPrivateRef, emptyNovaSolicitacaoForm, hasDraftContent, NOVA_SOLICITACAO_DRAFT_MAX_AGE_MS, novaSolicitacaoDraftKey, parseDraft, serializeDraft, validateDraftCatalogIds, type NovaSolicitacaoDraftData, type NovaSolicitacaoDraftDocument } from "./novaSolicitacaoDraft";
 import { cleanupExpiredDraftPrivate, deleteDraftPrivate, readDraftPrivate, removeDraftDocument, saveDraftDocument, saveDraftPix } from "./novaSolicitacaoDraftPrivate";
 import { COMPRA_DATA_ALERTA, COMPRA_HORARIO_ALERTA, divergenciasDeData, horarioLocalDaPartida, partidaAnteriorAoSolicitado } from "./passagemOperationalRules";
-import { aplicarResolucaoHospedagemLocal, HOSPEDAGEM_ATTACHMENT_TYPE, hospedagemOperacionalPendente, isHospedagemAttachment, justificativaHospedagemValida, parseHospedagemValor } from "./hospedagemOperationalRules";
+import { aplicarResolucaoHospedagemLocal, HOSPEDAGEM_ATTACHMENT_TYPE, hospedagemOperacionalPendente, isHospedagemAttachment, justificativaHospedagemValida, normalizeResolucaoOperacional, parseHospedagemValor } from "./hospedagemOperationalRules";
 import { resolveUserLabel } from "./userLabelResolution";
 import { isEditableOperationalCost, isPassageCost, parseOperationalCostValue } from "./operationalCostRules";
 import { approvalStatusLabel, approvalWaitingLabel, isApprovalOperationallyReleased, matchesApprovalFilter, type ApprovalFilter } from "./approvalVisibility";
@@ -1743,6 +1743,7 @@ export function Detalhe({ access, userId }: { access: Access; userId: string }) 
           setFuncionarioNomeExibicao(nomesFuncionarios[found.id] || null);
           setRow({
             ...found,
+            resolucao_operacional: normalizeResolucaoOperacional(found.resolucao_operacional),
             solicitante: {
               id: found.solicitante_id,
               full_name: solicitanteResolvido.status==="resolved"
@@ -1859,7 +1860,7 @@ export function Detalhe({ access, userId }: { access: Access; userId: string }) 
           <DT t="Ida prevista" v={data(row.data_ida)} />
           {(access.isRO||access.isAdmin||row.solicitante_id===userId)&&<DT t="PIX do viajante" v={row.pix_viajante} />}
           <DT t="Hospedagem" v={row.necessita_hospedagem ? "Hospedagem necessária" : "Não necessária"} />
-          {row.necessita_hospedagem&&<><DT t="Check-in" v={data(row.hospedagem_checkin)}/><DT t="Check-out" v={data(row.hospedagem_checkout)}/><DT t="Resultado no atendimento" v={row.resolucao_operacional?.[0]?.hospedagem_utilizada === false ? "Dispensada" : row.resolucao_operacional?.[0]?.hospedagem_utilizada === true ? "Contratada" : "Ainda não informado"}/><DT t="Valor gasto com hospedagem" v={row.resolucao_operacional?.[0]?.hospedagem_utilizada === false ? "Sem custo" : row.custos?.find((c)=>c.tipo==="hospedagem") ? dinheiro(Number(row.custos.find((c)=>c.tipo==="hospedagem")?.valor)) : "Ainda não registrado"}/>{row.resolucao_operacional?.[0]?.hospedagem_utilizada === false&&<DT t="Justificativa da dispensa" v={row.resolucao_operacional[0].hospedagem_justificativa}/>}<DT t="Vouchers de hospedagem" v={`${(row.anexos||[]).filter((a)=>isHospedagemAttachment(a.tipo)).length} PDF(s)`}/></>}
+          {row.necessita_hospedagem&&<><DT t="Check-in" v={data(row.hospedagem_checkin)}/><DT t="Check-out" v={data(row.hospedagem_checkout)}/><DT t="Resultado no atendimento" v={row.resolucao_operacional?.hospedagem_utilizada === false ? "Dispensada" : row.resolucao_operacional?.hospedagem_utilizada === true ? "Contratada" : "Ainda não informado"}/><DT t="Valor gasto com hospedagem" v={row.resolucao_operacional?.hospedagem_utilizada === false ? "Sem custo" : row.custos?.find((c)=>c.tipo==="hospedagem") ? dinheiro(Number(row.custos.find((c)=>c.tipo==="hospedagem")?.valor)) : "Ainda não registrado"}/>{row.resolucao_operacional?.hospedagem_utilizada === false&&<DT t="Justificativa da dispensa" v={row.resolucao_operacional.hospedagem_justificativa}/>}<DT t="Vouchers de hospedagem" v={`${(row.anexos||[]).filter((a)=>isHospedagemAttachment(a.tipo)).length} PDF(s)`}/></>}
           {row.ida_a_partir_horario&&<DT t="Horário" v={`Ida a partir de ${row.ida_a_partir_horario.slice(0,5)}`} />}
           {(access.isRh||access.isRO||access.isAdmin)&&row.desligamento_subtipo&&<DT t="Tipo de desligamento" v={row.desligamento_subtipo.replaceAll("_"," ")} />}
           {motivoPossuiRetorno(row.motivo) && (
@@ -2166,7 +2167,7 @@ function canViewFinancialCosts(access: Access) {
 }
 function HospedagemOperacional({ row, onResolved, onDone }: { row: Solicitacao; onResolved: (utilizada: boolean, justificativa: string | null) => void; onDone: () => void }) {
   const custo = row.custos?.find((item) => item.tipo === "hospedagem");
-  const resolucao = row.resolucao_operacional?.[0];
+  const resolucao = row.resolucao_operacional;
   const vouchers = (row.anexos || []).filter((item) => isHospedagemAttachment(item.tipo));
   const [utilizada, setUtilizada] = useState<"sim" | "nao" | "">(resolucao?.hospedagem_utilizada === true ? "sim" : resolucao?.hospedagem_utilizada === false ? "nao" : "");
   const [valor, setValor] = useState(custo ? String(custo.valor) : "");
@@ -2713,7 +2714,7 @@ function Compra({
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     if (extracting) return;
-    if (!complementar && hospedagemOperacionalPendente(row.necessita_hospedagem, row.resolucao_operacional?.[0]?.hospedagem_utilizada)) {
+    if (!complementar && hospedagemOperacionalPendente(row.necessita_hospedagem, row.resolucao_operacional?.hospedagem_utilizada)) {
       setErro("Informe primeiro se a hospedagem prevista foi contratada ou dispensada.");
       return;
     }

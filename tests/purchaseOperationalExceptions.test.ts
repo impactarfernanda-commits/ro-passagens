@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
-import { aplicarResolucaoHospedagemLocal, hospedagemOperacionalPendente, justificativaHospedagemValida } from "../src/hospedagemOperationalRules.ts";
+import { aplicarResolucaoHospedagemLocal, hospedagemOperacionalPendente, justificativaHospedagemValida, normalizeResolucaoOperacional } from "../src/hospedagemOperationalRules.ts";
 import { divergenciasDeData, locaisEquivalentesCompra } from "../src/passagemOperationalRules.ts";
 
 const migration = readFileSync("supabase/migrations/202609230001_resolucoes_operacionais_compra.sql", "utf8");
@@ -17,10 +17,28 @@ test("compra só bloqueia hospedagem prevista quando a decisão está ausente", 
 });
 
 test("dispensa salva atualiza imediatamente a resolução local preservando boolean false", () => {
-  const atualizada = aplicarResolucaoHospedagemLocal([], false, "Alojamento disponível na obra.");
-  assert.equal(atualizada[0].hospedagem_utilizada, false);
-  assert.equal(atualizada[0].hospedagem_justificativa, "Alojamento disponível na obra.");
-  assert.equal(hospedagemOperacionalPendente(true, atualizada[0].hospedagem_utilizada), false);
+  const atualizada = aplicarResolucaoHospedagemLocal(null, false, "Alojamento disponível na obra.");
+  assert.equal(atualizada.hospedagem_utilizada, false);
+  assert.equal(atualizada.hospedagem_justificativa, "Alojamento disponível na obra.");
+  assert.equal(hospedagemOperacionalPendente(true, atualizada.hospedagem_utilizada), false);
+});
+
+test("query inicial e refetch normalizam relação 0..1 sem perder false", () => {
+  const persistida = { hospedagem_utilizada: false, hospedagem_justificativa: ".........." };
+  assert.equal(normalizeResolucaoOperacional(persistida), persistida);
+  assert.equal(normalizeResolucaoOperacional([persistida]), persistida);
+  assert.equal(normalizeResolucaoOperacional(null), null);
+  const aposReload = normalizeResolucaoOperacional(persistida);
+  const aposRefetch = normalizeResolucaoOperacional(persistida);
+  assert.equal(hospedagemOperacionalPendente(true, aposReload?.hospedagem_utilizada), false);
+  assert.equal(hospedagemOperacionalPendente(true, aposRefetch?.hospedagem_utilizada), false);
+});
+
+test("Detalhe normaliza a query e HospedagemOperacional e Compra leem a mesma resolução", () => {
+  assert.match(page, /resolucao_operacional: normalizeResolucaoOperacional\(found\.resolucao_operacional\)/);
+  assert.match(page, /const resolucao = row\.resolucao_operacional/);
+  assert.match(page, /hospedagemOperacionalPendente\(row\.necessita_hospedagem, row\.resolucao_operacional\?\.hospedagem_utilizada\)/);
+  assert.doesNotMatch(page, /resolucao_operacional\?\.\[0\]/);
 });
 
 test("salvamento de hospedagem evita submissão simultânea e decisão idêntica", () => {

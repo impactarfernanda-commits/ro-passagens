@@ -17,17 +17,22 @@ type ResolucaoHospedagemLocal = {
   [key: string]: unknown;
 };
 
+export function normalizeResolucaoOperacional<T>(
+  value: T | readonly T[] | null | undefined,
+): T | null {
+  return Array.isArray(value) ? value[0] || null : value ?? null;
+}
+
 export function aplicarResolucaoHospedagemLocal<T extends ResolucaoHospedagemLocal>(
-  resolucoes: readonly T[] | undefined,
+  resolucao: T | null | undefined,
   hospedagemUtilizada: boolean,
   hospedagemJustificativa: string | null,
-): T[] {
-  const atual = resolucoes?.[0] || {};
-  return [{
-    ...atual,
+): T {
+  return {
+    ...(resolucao || {}),
     hospedagem_utilizada: hospedagemUtilizada,
     hospedagem_justificativa: hospedagemJustificativa,
-  } as T];
+  } as T;
 }
 
 export function parseHospedagemValor(value: string) {
