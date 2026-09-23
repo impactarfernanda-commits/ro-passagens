@@ -59,7 +59,7 @@ import { CostCenterCombobox } from "./CostCenterCombobox";
 import { draftPrivateRef, emptyNovaSolicitacaoForm, hasDraftContent, NOVA_SOLICITACAO_DRAFT_MAX_AGE_MS, novaSolicitacaoDraftKey, parseDraft, serializeDraft, validateDraftCatalogIds, type NovaSolicitacaoDraftData, type NovaSolicitacaoDraftDocument } from "./novaSolicitacaoDraft";
 import { cleanupExpiredDraftPrivate, deleteDraftPrivate, readDraftPrivate, removeDraftDocument, saveDraftDocument, saveDraftPix } from "./novaSolicitacaoDraftPrivate";
 import { COMPRA_DATA_ALERTA, COMPRA_HORARIO_ALERTA, divergenciasDeData, horarioLocalDaPartida, partidaAnteriorAoSolicitado } from "./passagemOperationalRules";
-import { HOSPEDAGEM_ATTACHMENT_TYPE, isHospedagemAttachment, justificativaHospedagemValida, parseHospedagemValor } from "./hospedagemOperationalRules";
+import { aplicarResolucaoHospedagemLocal, HOSPEDAGEM_ATTACHMENT_TYPE, hospedagemOperacionalPendente, isHospedagemAttachment, justificativaHospedagemValida, parseHospedagemValor } from "./hospedagemOperationalRules";
 import { resolveUserLabel } from "./userLabelResolution";
 import { isEditableOperationalCost, isPassageCost, parseOperationalCostValue } from "./operationalCostRules";
 import { approvalStatusLabel, approvalWaitingLabel, isApprovalOperationallyReleased, matchesApprovalFilter, type ApprovalFilter } from "./approvalVisibility";
@@ -1694,6 +1694,16 @@ export function Detalhe({ access, userId }: { access: Access; userId: string }) 
   const [erroIdentificacaoSolicitante,setErroIdentificacaoSolicitante]=useState(false);
   const [documentosInternos,setDocumentosInternos]=useState<Array<{id:string;categoria:string;arquivo_nome:string;storage_path:string;url?:string}>>([]);
   const [enderecoResidencial,setEnderecoResidencial]=useState<{nome?:string;data_nascimento?:string|null;cpf?:string|null;rg?:string|null;telefone?:string|null;cep?:string|null;logradouro:string|null;numero?:string|null;complemento?:string|null;bairro:string|null;cidade:string;uf:string;atualizado_em:string}|null>(null);
+  const atualizarResolucaoHospedagem = useCallback((utilizada: boolean, justificativa: string | null) => {
+    setRow((atual) => atual ? {
+      ...atual,
+      resolucao_operacional: aplicarResolucaoHospedagemLocal(
+        atual.resolucao_operacional,
+        utilizada,
+        justificativa,
+      ),
+    } : atual);
+  }, []);
   const load = useCallback(() => {
     if (!id) return;
     setFuncionarioNomeExibicao(null);
@@ -1891,7 +1901,7 @@ export function Detalhe({ access, userId }: { access: Access; userId: string }) 
       {access.isDenise && operacaoLiberada && !row.excluida_em && ["passagem_comprada", "finalizada"].includes(row.status) && (
         <Compra row={row} onDone={load} complementar />
       )}
-      {access.canOperateRO && operacaoLiberada && !row.excluida_em && row.necessita_hospedagem && !["cancelada","recusada"].includes(row.status) && <HospedagemOperacional row={row} onDone={load} />}
+      {access.canOperateRO && operacaoLiberada && !row.excluida_em && row.necessita_hospedagem && !["cancelada","recusada"].includes(row.status) && <HospedagemOperacional row={row} onResolved={atualizarResolucaoHospedagem} onDone={load} />}
       <PassagemComprada
         canAddAttachments={canAddAttachment(access.canOperateRO, row)}
         anexos={row.anexos || []}
@@ -2154,7 +2164,7 @@ function DT({ t, v }: { t: string; v?: string | null }) {
 function canViewFinancialCosts(access: Access) {
   return access.canViewAll;
 }
-function HospedagemOperacional({ row, onDone }: { row: Solicitacao; onDone: () => void }) {
+function HospedagemOperacional({ row, onResolved, onDone }: { row: Solicitacao; onResolved: (utilizada: boolean, justificativa: string | null) => void; onDone: () => void }) {
   const custo = row.custos?.find((item) => item.tipo === "hospedagem");
   const resolucao = row.resolucao_operacional?.[0];
   const vouchers = (row.anexos || []).filter((item) => isHospedagemAttachment(item.tipo));
@@ -2164,14 +2174,23 @@ function HospedagemOperacional({ row, onDone }: { row: Solicitacao; onDone: () =
   const [files, setFiles] = useState<File[]>([]);
   const [busy, setBusy] = useState(false);
   const [erro, setErro] = useState("");
+  const savingRef = useRef(false);
+  const utilizadaBooleana = utilizada === "sim" ? true : utilizada === "nao" ? false : null;
+  const justificativaNormalizada = utilizada === "nao" ? justificativa.trim() : null;
+  const decisaoInalterada = utilizadaBooleana !== null &&
+    utilizadaBooleana === resolucao?.hospedagem_utilizada &&
+    (utilizadaBooleana || justificativaNormalizada === (resolucao?.hospedagem_justificativa || "").trim()) &&
+    files.length === 0 &&
+    (utilizadaBooleana === false || parseHospedagemValor(valor) === Number(custo?.valor));
 
   async function salvar(event: React.FormEvent) {
     event.preventDefault();
+    if (savingRef.current || decisaoInalterada) return;
     if (!utilizada) { setErro("Informe se a hospedagem foi necessária no atendimento."); return; }
     const parsed = utilizada === "sim" ? parseHospedagemValor(valor) : null;
     if (utilizada === "sim" && parsed === null) { setErro("Informe um valor de hospedagem maior que zero."); return; }
     if (utilizada === "nao" && !justificativaHospedagemValida(justificativa)) { setErro("Informe uma justificativa com pelo menos 10 caracteres."); return; }
-    setBusy(true); setErro("");
+    savingRef.current = true; setBusy(true); setErro("");
     const uploaded: string[] = [];
     const inserted: string[] = [];
     try {
@@ -2199,12 +2218,13 @@ function HospedagemOperacional({ row, onDone }: { row: Solicitacao; onDone: () =
         p_justificativa: utilizada === "nao" ? justificativa.trim() : null,
       });
       if (result.error) throw new Error(result.error.message);
+      onResolved(utilizada === "sim", justificativaNormalizada);
       setFiles([]); window.alert(utilizada === "sim" ? (custo ? "Hospedagem atualizada." : "Hospedagem registrada.") : "Dispensa de hospedagem registrada."); onDone();
     } catch (cause) {
       if (inserted.length) await supabase.from("ro_passagem_anexos").delete().in("id", inserted);
       if (uploaded.length) await supabase.storage.from("ro-passagem-anexos").remove(uploaded);
       setErro(cause instanceof Error ? cause.message : "Não foi possível salvar a hospedagem.");
-    } finally { setBusy(false); }
+    } finally { savingRef.current = false; setBusy(false); }
   }
 
   async function remover(anexo: Anexo) {
@@ -2225,7 +2245,7 @@ function HospedagemOperacional({ row, onDone }: { row: Solicitacao; onDone: () =
       {files.length > 0 && <div className="wide attachment-empty">Prontos para envio: {files.map((file)=>file.name).join(", ")}</div>}
       {vouchers.length > 0 && <div className="wide attachment-list">{vouchers.map((anexo)=><div key={anexo.id}><span><strong>{anexo.nome_arquivo}</strong><small>Voucher de hospedagem</small></span><button type="button" className="btn danger" disabled={busy} onClick={()=>void remover(anexo)}>Remover</button></div>)}</div>}</>}
     {utilizada === "nao" && <label className="wide">Justificativa para não utilização da hospedagem *<textarea required minLength={10} value={justificativa} onChange={(event)=>setJustificativa(event.target.value)} placeholder="Ex.: Alojamento disponível na obra."/><small>Mínimo de 10 caracteres. Nenhum custo de hospedagem será gerado.</small></label>}
-    <div className="actions wide"><button className="btn primary" disabled={busy}>{busy ? "Salvando..." : "Salvar decisão de hospedagem"}</button></div>
+    <div className="actions wide"><button className="btn primary" disabled={busy || decisaoInalterada}>{busy ? "Salvando..." : decisaoInalterada ? "Decisão já salva" : "Salvar decisão de hospedagem"}</button></div>
   </form>;
 }
 function PassagemComprada({
@@ -2693,7 +2713,7 @@ function Compra({
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     if (extracting) return;
-    if (!complementar && row.necessita_hospedagem && row.resolucao_operacional?.[0]?.hospedagem_utilizada == null) {
+    if (!complementar && hospedagemOperacionalPendente(row.necessita_hospedagem, row.resolucao_operacional?.[0]?.hospedagem_utilizada)) {
       setErro("Informe primeiro se a hospedagem prevista foi contratada ou dispensada.");
       return;
     }

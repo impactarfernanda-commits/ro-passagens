@@ -1,12 +1,33 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
-import { justificativaHospedagemValida } from "../src/hospedagemOperationalRules.ts";
+import { aplicarResolucaoHospedagemLocal, hospedagemOperacionalPendente, justificativaHospedagemValida } from "../src/hospedagemOperationalRules.ts";
 import { divergenciasDeData, locaisEquivalentesCompra } from "../src/passagemOperationalRules.ts";
 
 const migration = readFileSync("supabase/migrations/202609230001_resolucoes_operacionais_compra.sql", "utf8");
 const hardening = readFileSync("supabase/migrations/202609230002_endurece_resolucoes_operacionais_compra.sql", "utf8");
 const page = readFileSync("src/pages.tsx", "utf8");
+
+test("compra só bloqueia hospedagem prevista quando a decisão está ausente", () => {
+  assert.equal(hospedagemOperacionalPendente(true, null), true);
+  assert.equal(hospedagemOperacionalPendente(true, undefined), true);
+  assert.equal(hospedagemOperacionalPendente(true, false), false);
+  assert.equal(hospedagemOperacionalPendente(true, true), false);
+  assert.equal(hospedagemOperacionalPendente(false, null), false);
+});
+
+test("dispensa salva atualiza imediatamente a resolução local preservando boolean false", () => {
+  const atualizada = aplicarResolucaoHospedagemLocal([], false, "Alojamento disponível na obra.");
+  assert.equal(atualizada[0].hospedagem_utilizada, false);
+  assert.equal(atualizada[0].hospedagem_justificativa, "Alojamento disponível na obra.");
+  assert.equal(hospedagemOperacionalPendente(true, atualizada[0].hospedagem_utilizada), false);
+});
+
+test("salvamento de hospedagem evita submissão simultânea e decisão idêntica", () => {
+  assert.match(page, /if \(savingRef\.current \|\| decisaoInalterada\) return/);
+  assert.match(page, /disabled=\{busy \|\| decisaoInalterada\}/);
+  assert.match(page, /onResolved\(utilizada === "sim", justificativaNormalizada\)/);
+});
 
 test("hospedagem utilizada preserva custo positivo; dispensa exige justificativa e remove custo", () => {
   assert.equal(justificativaHospedagemValida("Alojamento disponível na obra."), true);
