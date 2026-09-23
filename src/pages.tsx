@@ -58,8 +58,8 @@ import { normalizeSolicitacoesFilters, readSolicitacoesFilters, writeSolicitacoe
 import { CostCenterCombobox } from "./CostCenterCombobox";
 import { draftPrivateRef, emptyNovaSolicitacaoForm, hasDraftContent, NOVA_SOLICITACAO_DRAFT_MAX_AGE_MS, novaSolicitacaoDraftKey, parseDraft, serializeDraft, validateDraftCatalogIds, type NovaSolicitacaoDraftData, type NovaSolicitacaoDraftDocument } from "./novaSolicitacaoDraft";
 import { cleanupExpiredDraftPrivate, deleteDraftPrivate, readDraftPrivate, removeDraftDocument, saveDraftDocument, saveDraftPix } from "./novaSolicitacaoDraftPrivate";
-import { COMPRA_HORARIO_ALERTA, horarioLocalDaPartida, partidaAnteriorAoSolicitado } from "./passagemOperationalRules";
-import { HOSPEDAGEM_ATTACHMENT_TYPE, isHospedagemAttachment, parseHospedagemValor } from "./hospedagemOperationalRules";
+import { COMPRA_DATA_ALERTA, COMPRA_HORARIO_ALERTA, divergenciasDeData, horarioLocalDaPartida, partidaAnteriorAoSolicitado } from "./passagemOperationalRules";
+import { HOSPEDAGEM_ATTACHMENT_TYPE, isHospedagemAttachment, justificativaHospedagemValida, parseHospedagemValor } from "./hospedagemOperationalRules";
 import { resolveUserLabel } from "./userLabelResolution";
 import { isEditableOperationalCost, isPassageCost, parseOperationalCostValue } from "./operationalCostRules";
 import { approvalStatusLabel, approvalWaitingLabel, isApprovalOperationallyReleased, matchesApprovalFilter, type ApprovalFilter } from "./approvalVisibility";
@@ -80,7 +80,7 @@ import type {
   Status,
 } from "./types";
 const join =
-  "*, funcionario:funcionarios(id,nome), obra:obras!ro_passagem_solicitacoes_obra_id_fkey(id,nome,codigo,descricao), centro_custo_retorno:obras!ro_passagem_solicitacoes_centro_custo_retorno_id_fkey(id,nome,codigo,descricao), centro_custo_destino:obras!ro_passagem_solicitacoes_centro_custo_destino_id_fkey(id,nome,codigo,descricao), custos:ro_passagem_custos(*), notificacoes:ro_passagem_notificacoes(*), historico:ro_passagem_historico(*), anexos:ro_passagem_anexos(*)";
+  "*, funcionario:funcionarios(id,nome), obra:obras!ro_passagem_solicitacoes_obra_id_fkey(id,nome,codigo,descricao), centro_custo_retorno:obras!ro_passagem_solicitacoes_centro_custo_retorno_id_fkey(id,nome,codigo,descricao), centro_custo_destino:obras!ro_passagem_solicitacoes_centro_custo_destino_id_fkey(id,nome,codigo,descricao), custos:ro_passagem_custos(*), notificacoes:ro_passagem_notificacoes(*), historico:ro_passagem_historico(*), anexos:ro_passagem_anexos(*), resolucao_operacional:ro_resolucao_operacional(*)";
 async function carregarNomesColaboradoresSolicitacoes(solicitacoes: Array<Pick<Solicitacao, "id">>) {
   const ids = idsSolicitacoesParaResolver(solicitacoes);
   if (!ids.length) return {};
@@ -1849,7 +1849,7 @@ export function Detalhe({ access, userId }: { access: Access; userId: string }) 
           <DT t="Ida prevista" v={data(row.data_ida)} />
           {(access.isRO||access.isAdmin||row.solicitante_id===userId)&&<DT t="PIX do viajante" v={row.pix_viajante} />}
           <DT t="Hospedagem" v={row.necessita_hospedagem ? "Hospedagem necessária" : "Não necessária"} />
-          {row.necessita_hospedagem&&<><DT t="Check-in" v={data(row.hospedagem_checkin)}/><DT t="Check-out" v={data(row.hospedagem_checkout)}/><DT t="Valor gasto com hospedagem" v={row.custos?.find((c)=>c.tipo==="hospedagem") ? dinheiro(Number(row.custos.find((c)=>c.tipo==="hospedagem")?.valor)) : "Ainda não registrado"}/><DT t="Vouchers de hospedagem" v={`${(row.anexos||[]).filter((a)=>isHospedagemAttachment(a.tipo)).length} PDF(s)`}/></>}
+          {row.necessita_hospedagem&&<><DT t="Check-in" v={data(row.hospedagem_checkin)}/><DT t="Check-out" v={data(row.hospedagem_checkout)}/><DT t="Resultado no atendimento" v={row.resolucao_operacional?.[0]?.hospedagem_utilizada === false ? "Dispensada" : row.resolucao_operacional?.[0]?.hospedagem_utilizada === true ? "Contratada" : "Ainda não informado"}/><DT t="Valor gasto com hospedagem" v={row.resolucao_operacional?.[0]?.hospedagem_utilizada === false ? "Sem custo" : row.custos?.find((c)=>c.tipo==="hospedagem") ? dinheiro(Number(row.custos.find((c)=>c.tipo==="hospedagem")?.valor)) : "Ainda não registrado"}/>{row.resolucao_operacional?.[0]?.hospedagem_utilizada === false&&<DT t="Justificativa da dispensa" v={row.resolucao_operacional[0].hospedagem_justificativa}/>}<DT t="Vouchers de hospedagem" v={`${(row.anexos||[]).filter((a)=>isHospedagemAttachment(a.tipo)).length} PDF(s)`}/></>}
           {row.ida_a_partir_horario&&<DT t="Horário" v={`Ida a partir de ${row.ida_a_partir_horario.slice(0,5)}`} />}
           {(access.isRh||access.isRO||access.isAdmin)&&row.desligamento_subtipo&&<DT t="Tipo de desligamento" v={row.desligamento_subtipo.replaceAll("_"," ")} />}
           {motivoPossuiRetorno(row.motivo) && (
@@ -2156,23 +2156,28 @@ function canViewFinancialCosts(access: Access) {
 }
 function HospedagemOperacional({ row, onDone }: { row: Solicitacao; onDone: () => void }) {
   const custo = row.custos?.find((item) => item.tipo === "hospedagem");
+  const resolucao = row.resolucao_operacional?.[0];
   const vouchers = (row.anexos || []).filter((item) => isHospedagemAttachment(item.tipo));
+  const [utilizada, setUtilizada] = useState<"sim" | "nao" | "">(resolucao?.hospedagem_utilizada === true ? "sim" : resolucao?.hospedagem_utilizada === false ? "nao" : "");
   const [valor, setValor] = useState(custo ? String(custo.valor) : "");
+  const [justificativa, setJustificativa] = useState(resolucao?.hospedagem_justificativa || "");
   const [files, setFiles] = useState<File[]>([]);
   const [busy, setBusy] = useState(false);
   const [erro, setErro] = useState("");
 
   async function salvar(event: React.FormEvent) {
     event.preventDefault();
-    const parsed = parseHospedagemValor(valor);
-    if (parsed === null) { setErro("Informe um valor de hospedagem maior que zero."); return; }
+    if (!utilizada) { setErro("Informe se a hospedagem foi necessária no atendimento."); return; }
+    const parsed = utilizada === "sim" ? parseHospedagemValor(valor) : null;
+    if (utilizada === "sim" && parsed === null) { setErro("Informe um valor de hospedagem maior que zero."); return; }
+    if (utilizada === "nao" && !justificativaHospedagemValida(justificativa)) { setErro("Informe uma justificativa com pelo menos 10 caracteres."); return; }
     setBusy(true); setErro("");
     const uploaded: string[] = [];
     const inserted: string[] = [];
     try {
       const user = (await supabase.auth.getUser()).data.user;
       if (!user) throw new Error("Sessão expirada. Entre novamente.");
-      for (const file of files) {
+      for (const file of utilizada === "sim" ? files : []) {
         const invalid = validatePdfFile(file);
         if (invalid) throw new Error(`${file.name}: ${invalid}`);
         const safeName = file.name.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-zA-Z0-9._-]/g, "-");
@@ -2187,9 +2192,14 @@ function HospedagemOperacional({ row, onDone }: { row: Solicitacao; onDone: () =
         if (attachment.error || !attachment.data) throw new Error(`Não foi possível vincular ${file.name} à hospedagem.`);
         inserted.push(attachment.data.id);
       }
-      const result = await supabase.rpc("ro_registrar_hospedagem", { p_solicitacao_id: row.id, p_valor_total: parsed });
+      const result = await supabase.rpc("ro_resolver_hospedagem", {
+        p_solicitacao_id: row.id,
+        p_hospedagem_utilizada: utilizada === "sim",
+        p_valor_total: parsed,
+        p_justificativa: utilizada === "nao" ? justificativa.trim() : null,
+      });
       if (result.error) throw new Error(result.error.message);
-      setFiles([]); window.alert(custo ? "Hospedagem atualizada." : "Hospedagem registrada."); onDone();
+      setFiles([]); window.alert(utilizada === "sim" ? (custo ? "Hospedagem atualizada." : "Hospedagem registrada.") : "Dispensa de hospedagem registrada."); onDone();
     } catch (cause) {
       if (inserted.length) await supabase.from("ro_passagem_anexos").delete().in("id", inserted);
       if (uploaded.length) await supabase.storage.from("ro-passagem-anexos").remove(uploaded);
@@ -2207,13 +2217,15 @@ function HospedagemOperacional({ row, onDone }: { row: Solicitacao; onDone: () =
   }
 
   return <form className="card form hospitality" onSubmit={salvar}>
-    <div className="wide section-title"><FileText/><div><h2>Hospedagem</h2><p>Hospedagem necessária · Check-in: {data(row.hospedagem_checkin)} · Check-out: {data(row.hospedagem_checkout)}</p></div></div>
+    <div className="wide section-title"><FileText/><div><h2>Hospedagem</h2><p>Prevista na solicitação · Check-in: {data(row.hospedagem_checkin)} · Check-out: {data(row.hospedagem_checkout)}</p></div></div>
     {erro && <div className="error wide">{erro}</div>}
-    <label className="wide">Valor da hospedagem (R$)<input type="number" min="0.01" step="0.01" required value={valor} onChange={(event)=>setValor(event.target.value)} /><small>Valor total gasto com a hospedagem deste atendimento, não o valor por diária.</small></label>
-    <label className="pdf-drop-zone wide"><Upload size={20}/><span><strong>Arraste o PDF aqui ou clique para selecionar</strong><small>Voucher opcional · vários PDFs de até 10 MB cada.</small></span><input type="file" accept="application/pdf,.pdf" multiple disabled={busy} onChange={(event)=>{setFiles(Array.from(event.target.files || []));event.target.value="";}}/></label>
-    {files.length > 0 && <div className="wide attachment-empty">Prontos para envio: {files.map((file)=>file.name).join(", ")}</div>}
-    {vouchers.length > 0 && <div className="wide attachment-list">{vouchers.map((anexo)=><div key={anexo.id}><span><strong>{anexo.nome_arquivo}</strong><small>Voucher de hospedagem</small></span><button type="button" className="btn danger" disabled={busy} onClick={()=>void remover(anexo)}>Remover</button></div>)}</div>}
-    <div className="actions wide"><button className="btn primary" disabled={busy}>{busy ? "Salvando..." : custo ? "Atualizar hospedagem" : "Salvar hospedagem"}</button></div>
+    <fieldset className="wide operational-decision"><legend>Hospedagem foi necessária no atendimento?</legend><label><input type="radio" name={`hospedagem-${row.id}`} checked={utilizada === "sim"} onChange={()=>setUtilizada("sim")}/> Sim</label><label><input type="radio" name={`hospedagem-${row.id}`} checked={utilizada === "nao"} onChange={()=>{setUtilizada("nao");setFiles([]);}}/> Não</label></fieldset>
+    {utilizada === "sim" && <><label className="wide">Valor da hospedagem (R$)<input type="number" min="0.01" step="0.01" required value={valor} onChange={(event)=>setValor(event.target.value)} /><small>Valor total gasto com a hospedagem deste atendimento, não o valor por diária.</small></label>
+      <label className="pdf-drop-zone wide"><Upload size={20}/><span><strong>Arraste o PDF aqui ou clique para selecionar</strong><small>Voucher opcional · vários PDFs de até 10 MB cada.</small></span><input type="file" accept="application/pdf,.pdf" multiple disabled={busy} onChange={(event)=>{setFiles(Array.from(event.target.files || []));event.target.value="";}}/></label>
+      {files.length > 0 && <div className="wide attachment-empty">Prontos para envio: {files.map((file)=>file.name).join(", ")}</div>}
+      {vouchers.length > 0 && <div className="wide attachment-list">{vouchers.map((anexo)=><div key={anexo.id}><span><strong>{anexo.nome_arquivo}</strong><small>Voucher de hospedagem</small></span><button type="button" className="btn danger" disabled={busy} onClick={()=>void remover(anexo)}>Remover</button></div>)}</div>}</>}
+    {utilizada === "nao" && <label className="wide">Justificativa para não utilização da hospedagem *<textarea required minLength={10} value={justificativa} onChange={(event)=>setJustificativa(event.target.value)} placeholder="Ex.: Alojamento disponível na obra."/><small>Mínimo de 10 caracteres. Nenhum custo de hospedagem será gerado.</small></label>}
+    <div className="actions wide"><button className="btn primary" disabled={busy}>{busy ? "Salvando..." : "Salvar decisão de hospedagem"}</button></div>
   </form>;
 }
 function PassagemComprada({
@@ -2499,7 +2511,10 @@ function Compra({
   const dragDepth = useRef(0);
   const [erro, setErro] = useState("");
   const [confirmarHorario, setConfirmarHorario] = useState(false);
-  const confirmacaoHorarioRef = useRef(false);
+  const confirmacaoHorarioRef = useRef<string | null>(null);
+  const [confirmarData, setConfirmarData] = useState(false);
+  const [justificativaData, setJustificativaData] = useState("");
+  const confirmacaoDataRef = useRef<string | null>(null);
   const compraFormRef = useRef<HTMLFormElement>(null);
   const [form, setForm] = useState<CompraForm>(
     savedDraft?.form || initialCompraForm(row),
@@ -2525,6 +2540,22 @@ function Compra({
   const totalPassagens = totalTicketValues(documentos);
   const valoresDivergentes = grupos.some((grupo) => grupo.conflictingValues);
   const revisaoPendente = grupos.some((grupo) => grupo.needsReview);
+  const trechosCompra = grupos.map((grupo) => grupo.documents.find((documento) => documento.id === grupo.financialDocumentId) || grupo.documents[0]).filter(Boolean).map((documento) => ({
+    origem: documento.origem || "",
+    destino: documento.destino || "",
+    partida_em: documento.partida_em || "",
+  }));
+  const divergenciasData = complementar ? [] : divergenciasDeData(trechosCompra, row);
+  const confirmationFingerprint = JSON.stringify({
+    solicitacao: [row.data_ida,row.data_retorno,row.ida_a_partir_horario,row.origem,row.destino],
+    documentos: pdfs.map((pdf)=>[pdf.id,pdf.file.name,pdf.file.size,pdf.partida_em,pdf.origem,pdf.destino,pdf.valor,pdf.tipo_documento]),
+  });
+  useEffect(()=>{
+    confirmacaoHorarioRef.current=null;
+    confirmacaoDataRef.current=null;
+    setConfirmarHorario(false);
+    setConfirmarData(false);
+  },[confirmationFingerprint]);
   const updatePdf = (id: string, patch: Partial<PdfDraft>) => {
     const stored = purchaseDraftBySolicitacaoId.get(draftKey);
     if (stored)
@@ -2662,6 +2693,10 @@ function Compra({
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     if (extracting) return;
+    if (!complementar && row.necessita_hospedagem && row.resolucao_operacional?.[0]?.hospedagem_utilizada == null) {
+      setErro("Informe primeiro se a hospedagem prevista foi contratada ou dispensada.");
+      return;
+    }
     if (valoresDivergentes) {
       setErro(
         "Documentos parecem ser da mesma passagem, mas possuem valores diferentes. Revise antes de confirmar.",
@@ -2676,9 +2711,13 @@ function Compra({
     }
     const primeiraPartidaLocalParaValidar = pdfs.map((pdf) => pdf.partida_em).filter(Boolean).sort()[0];
     const horarioAnterior = !complementar && partidaAnteriorAoSolicitado(primeiraPartidaLocalParaValidar, row.ida_a_partir_horario);
-    if (horarioAnterior && !confirmacaoHorarioRef.current) { setConfirmarHorario(true); return; }
-    const divergenciaConfirmada = horarioAnterior && confirmacaoHorarioRef.current;
-    confirmacaoHorarioRef.current = false;
+    if (horarioAnterior && confirmacaoHorarioRef.current !== confirmationFingerprint) { setConfirmarHorario(true); return; }
+    const divergenciaConfirmada = horarioAnterior && confirmacaoHorarioRef.current === confirmationFingerprint;
+    if (divergenciasData.length && confirmacaoDataRef.current !== confirmationFingerprint) { setConfirmarData(true); return; }
+    if (divergenciasData.length && justificativaData.trim().length < 10) { setConfirmarData(true); return; }
+    const dataDivergenteConfirmada = divergenciasData.length > 0 && confirmacaoDataRef.current === confirmationFingerprint;
+    confirmacaoHorarioRef.current = null;
+    confirmacaoDataRef.current = null;
     setBusy(true);
     setErro("");
     const storagePaths: string[] = [];
@@ -2778,7 +2817,7 @@ function Compra({
             p_motivo_complementar: form.motivo_complementar,
             p_custos_adicionais: custos.filter((custo)=>custo.tipo!=="passagem"),
           })
-        : await supabase.rpc("ro_registrar_compra", {
+        : await supabase.rpc("ro_registrar_compra_v2", {
             p_solicitacao_id: row.id,
             p_tipo_transporte: null,
             p_companhia: null,
@@ -2791,6 +2830,9 @@ function Compra({
             p_custos: custos,
             p_horario_anterior_confirmado: divergenciaConfirmada,
             p_partida_horario_local: horarioLocalDaPartida(primeiraPartidaLocal),
+            p_trechos: trechosCompra,
+            p_data_divergente_confirmada: dataDivergenteConfirmada,
+            p_data_divergente_justificativa: dataDivergenteConfirmada ? justificativaData.trim() : null,
           });
       if (error) throw new Error(error.message);
       purchaseDraftBySolicitacaoId.delete(draftKey);
@@ -2868,7 +2910,8 @@ function Compra({
       {erro && <div className="error wide">{erro}</div>}
       {row.necessita_hospedagem&&<div className="alert wide"><strong>Hospedagem: {data(row.hospedagem_checkin)} → {data(row.hospedagem_checkout)}</strong></div>}
       {row.ida_a_partir_horario&&<div className="alert wide"><strong>Ida a partir de {row.ida_a_partir_horario.slice(0,5)}</strong></div>}
-      {confirmarHorario&&<div className="rejection-backdrop" role="dialog" aria-modal="true" aria-labelledby="horario-confirmacao-title"><div className="rejection-modal"><h2 id="horario-confirmacao-title">{COMPRA_HORARIO_ALERTA}</h2><div className="actions"><button type="button" className="btn secondary" onClick={()=>setConfirmarHorario(false)}>Voltar</button><button type="button" className="btn primary" onClick={()=>{confirmacaoHorarioRef.current=true;setConfirmarHorario(false);compraFormRef.current?.requestSubmit()}}>Confirmar mesmo assim</button></div></div></div>}
+      {confirmarHorario&&<div className="rejection-backdrop" role="dialog" aria-modal="true" aria-labelledby="horario-confirmacao-title"><div className="rejection-modal"><h2 id="horario-confirmacao-title">{COMPRA_HORARIO_ALERTA}</h2><div className="actions"><button type="button" className="btn secondary" onClick={()=>setConfirmarHorario(false)}>Voltar</button><button type="button" className="btn primary" onClick={()=>{confirmacaoHorarioRef.current=confirmationFingerprint;setConfirmarHorario(false);compraFormRef.current?.requestSubmit()}}>Confirmar mesmo assim</button></div></div></div>}
+      {confirmarData&&<div className="rejection-backdrop" role="dialog" aria-modal="true" aria-labelledby="data-confirmacao-title"><div className="rejection-modal"><h2 id="data-confirmacao-title">{COMPRA_DATA_ALERTA}</h2>{divergenciasData.map((item)=><div className="date-comparison" key={`${item.sentido}-${item.data_comprada}`}><strong>{item.sentido === "ida" ? "Ida" : "Retorno"}</strong><span>Data solicitada: {data(item.data_solicitada)}</span><span>Data da passagem: {data(item.data_comprada)}</span></div>)}<label>Justificativa *<textarea minLength={10} required value={justificativaData} onChange={(event)=>setJustificativaData(event.target.value)} placeholder="Ex.: Melhor disponibilidade de voo/ônibus."/><small>Mínimo de 10 caracteres.</small></label><div className="actions"><button type="button" className="btn secondary" onClick={()=>setConfirmarData(false)}>Voltar</button><button type="button" className="btn primary" disabled={justificativaData.trim().length<10} onClick={()=>{confirmacaoDataRef.current=confirmationFingerprint;setConfirmarData(false);compraFormRef.current?.requestSubmit()}}>Confirmar mesmo assim</button></div></div></div>}
       {valoresDivergentes && (
         <div className="error wide">
           Documentos parecem ser da mesma passagem, mas possuem valores

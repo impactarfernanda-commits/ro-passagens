@@ -13,7 +13,7 @@ test("RPC canônica corrige a cadeia sem expor a função interna", () => {
   assert.match(migration, /perform public\.ro_registrar_compra_pre_operacional/i);
   assert.match(migration, /revoke all on function public\.ro_registrar_compra_pre_operacional[^;]+from public,anon,authenticated/i);
   assert.doesNotMatch(migration, /grant execute on function public\.ro_registrar_compra_pre_operacional/i);
-  assert.match(page, /supabase\.rpc\("ro_registrar_compra"/);
+  assert.match(page, /supabase\.rpc\("ro_registrar_compra_v2"/);
 });
 
 test("hospedagem usa custo único, positivo e idempotente", () => {

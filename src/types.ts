@@ -122,6 +122,15 @@ export type Solicitacao = {
   necessita_hospedagem: boolean;
   hospedagem_checkin: string | null;
   hospedagem_checkout: string | null;
+  resolucao_operacional?: Array<{
+    hospedagem_utilizada: boolean | null;
+    hospedagem_justificativa: string | null;
+    hospedagem_confirmado_por: string | null;
+    hospedagem_confirmado_em: string | null;
+    divergencias_data: Array<{ sentido: "ida" | "retorno"; data_solicitada: string; data_comprada: string; justificativa: string }>;
+    data_confirmado_por: string | null;
+    data_confirmado_em: string | null;
+  }>;
   ida_a_partir_horario: string | null;
   observacoes_ro: string | null;
   tipo_transporte: string | null;
