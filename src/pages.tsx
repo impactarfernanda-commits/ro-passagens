@@ -47,6 +47,7 @@ import { supabase } from "./supabase";
 import { isRateLimitError, PASSWORD_MIN_LENGTH, PASSWORD_RECOVERY_MESSAGE, PASSWORD_RECOVERY_REDIRECT } from "./auth";
 import { calcularDataMinima, canExcepcionarPrazo, categoriaDocumento, dataMinimaDoInput, limparDataIdaInvalida, mensagemAntecedencia, motivoAoSelecionarFuncionario, motivoPermiteExcecaoPrazo, motivosPermitidos, regraPrazo } from "./passagemRules";
 import { motivoPrefillPermitido, motivoRecusaValido, podeRecusarSolicitacao, statusContaComoAberto } from "./recusaRules";
+import { operationalRejectionErrorDetails, operationalRejectionErrorMessage } from "./recusaErrorMessages";
 import { compraFolgaLiberada, dataAntecipaCiclo, estadoEfetivoFolga, folgaFuturaBloqueia, justificativaAntecipacaoValida, SEM_HISTORICO_FOLGA, type CicloFolga } from "./folgaCampoRules";
 import { motivoPossuiRetorno, normalizarCamposRetorno } from "./retornoRules";
 import { formatCityUf, normalizeNeighborhoodForDisplay, normalizeStreetForDisplay, parseCityUf } from "./collaboratorDisplay";
@@ -2008,8 +2009,8 @@ function RecusarSolicitacao({row,onDone}:{row:Solicitacao;onDone:()=>void}) {
     setBusy(true);setErro("");
     const {error}=await supabase.rpc("ro_recusar_solicitacao",{p_solicitacao_id:row.id,p_motivo:util});
     if(error){
-      const mensagens:Record<string,string>={NAO_PERTENCE_EQUIPE_RO:"Somente integrantes ativos da equipe RO podem recusar.",SOLICITACAO_NAO_ENCONTRADA:"Solicitação não encontrada.",SOLICITACAO_JA_RECUSADA:"Esta solicitação já foi recusada.",SOLICITACAO_JA_REPROVADA:"Esta solicitação já foi reprovada pelo aprovador.",PASSAGEM_JA_COMPRADA:"A passagem já foi comprada e não pode mais ser recusada.",STATUS_NAO_PERMITE_RECUSA:"O status atual não permite recusa.",MOTIVO_RECUSA_OBRIGATORIO:"Informe ao menos 10 caracteres úteis."};
-      setErro(Object.entries(mensagens).find(([codigo])=>error.message.includes(codigo))?.[1]||"Não foi possível recusar a solicitação.");setBusy(false);return;
+      if(import.meta.env.DEV) console.error("Falha ao recusar solicitação", operationalRejectionErrorDetails(error));
+      setErro(operationalRejectionErrorMessage(error));setBusy(false);return;
     }
     setAberto(false);setMotivo("");setBusy(false);onDone();
   }

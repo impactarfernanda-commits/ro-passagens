@@ -14,6 +14,7 @@ const verify=readFileSync(new URL("../supabase/manual/verificar_recusa_solicitac
 const smoke=readFileSync(new URL("../supabase/manual/smoke_recusa_solicitacao_ro.sql",import.meta.url),"utf8");
 
 test("RO ativo vê recusa",()=>assert.equal(podeRecusarSolicitacao(true,row()),true));
+test("status legado em_analise não oferece recusa que o backend rejeitaria",()=>assert.equal(podeRecusarSolicitacao(true,row({status:"em_analise"})),false));
 for(const nome of ["RO inativo","gerente sem RO","diretor sem RO","solicitante comum","RH sem RO"])test(`${nome} não vê recusa`,()=>assert.equal(podeRecusarSolicitacao(false,row()),false));
 test("solicitação comprada não mostra recusa",()=>assert.equal(podeRecusarSolicitacao(true,row({status:"passagem_comprada"})),false));
 test("compra por timestamp bloqueia recusa",()=>assert.equal(solicitacaoFoiComprada(row({comprado_em:"2026-08-05T12:00:00Z"})),true));
