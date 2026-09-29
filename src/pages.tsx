@@ -70,6 +70,7 @@ import { dispensaAprovacaoDesligamentoUrgente } from "./approvalRules";
 import { canShowSolicitacaoDeletion, deletionErrorMessage, normalizeDeletionReason } from "./solicitacaoDeletion";
 import { complementaryCostCenters, complementaryCostCenterValidationMessage, complementaryPassageErrorMessage } from "./complementaryPassage";
 import { additionalOperationalCostPayload, validateAdditionalOperationalCost } from "./additionalOperationalCost";
+import { visibleOperationalCostLabel, visibleOperationalCosts, visibleOperationalCostsTotal, type VisibleOperationalCost } from "./requesterOperationalCosts";
 import { autoMapHeaders, buildCollaboratorSuggestions, canKeepAsExternal, duplicateCpfRows, formatCpf, formatPhone, isSpreadsheetRows, isValidCpf, matchCollaborator, MAX_RH_XLSX_BYTES, normalizeCpf, normalizePhone, parseBirthDate, possibleMatches, resolveCollaboratorSuggestion, strongAuxiliaryMatches, validUf, type AddressField, type CollaboratorSuggestion, type ColumnMapping, type SpreadsheetRows } from "./addressImport";
 import type {
   Anexo,
@@ -1732,9 +1733,13 @@ export function Detalhe({ access, userId }: { access: Access; userId: string }) 
             found.folga_antecipacao_analisada_por,
             ...anexos.map(criadorAnexoId),
           ].filter(Boolean) as string[];
-          const [{ data: labels, error: labelsError }, nomesFuncionarios] = await Promise.all([
+          const visibleCostsPromise = !access.canViewAll
+            ? supabase.rpc("ro_custos_operacionais_visiveis", { p_solicitacao_id: found.id })
+            : Promise.resolve({ data: null, error: null });
+          const [{ data: labels, error: labelsError }, nomesFuncionarios, visibleCostsResult] = await Promise.all([
             supabase.rpc("ro_user_labels", { p_user_ids: ids }),
             carregarNomesColaboradoresSolicitacoes([found]),
+            visibleCostsPromise,
           ]);
           const labelMap = new Map(
             (labels || []).map((item: { id: string; label: string }) => [
@@ -1747,6 +1752,9 @@ export function Detalhe({ access, userId }: { access: Access; userId: string }) 
           setFuncionarioNomeExibicao(nomesFuncionarios[found.id] || null);
           setRow({
             ...found,
+            custos: visibleCostsResult.data
+              ? (visibleCostsResult.data as VisibleOperationalCost[]).map((cost) => ({ ...cost, centro_custo_id: null }))
+              : found.custos,
             resolucao_operacional: normalizeResolucaoOperacional(found.resolucao_operacional),
             solicitante: {
               id: found.solicitante_id,
@@ -1779,7 +1787,7 @@ export function Detalhe({ access, userId }: { access: Access; userId: string }) 
         setErro(error?.message || "");
         setLoading(false);
       });
-  }, [id]);
+  }, [access.canViewAll, id]);
   useEffect(load, [load]);
   useEffect(()=>{if(!id || !(access.isRh||access.isRO||access.isAdmin))return;supabase.from("ro_passagem_documentos_internos").select("id,categoria,arquivo_nome,storage_path").eq("solicitacao_id",id).then(async({data})=>{const docs=await Promise.all((data||[]).map(async(d)=>{const signed=await supabase.storage.from("ro-documentos-internos").createSignedUrl(d.storage_path,300);return {...d,url:signed.data?.signedUrl};}));setDocumentosInternos(docs);});},[id,access.isRh,access.isRO,access.isAdmin]);
   useEffect(()=>{if(!row||!(access.isRh||access.isRO||access.canImport))return;const request=row.colaborador_id?supabase.rpc("ro_obter_colaborador_detalhe",{p_colaborador_id:row.colaborador_id}):supabase.rpc("ro_obter_endereco_residencial_completo",{p_funcionario_id:row.funcionario_id});request.then(({data})=>setEnderecoResidencial((Array.isArray(data)?data[0]:data)||null))},[row,access.isRh,access.isRO,access.canImport]);
@@ -1915,6 +1923,7 @@ export function Detalhe({ access, userId }: { access: Access; userId: string }) 
         custos={row.custos || []}
         orientacoesRo={row.observacoes_ro}
         canViewCosts={canViewFinancialCosts(access)}
+        canViewOperationalCosts={!access.canViewAll}
         canEditCosts={access.canOperateRO && operacaoLiberada && !row.excluida_em && !["cancelada", "recusada"].includes(row.status)}
         canEditPassage={access.isDenise && operacaoLiberada && !row.excluida_em && !["cancelada", "recusada"].includes(row.status)}
         solicitacaoId={row.id}
@@ -2262,6 +2271,7 @@ function PassagemComprada({
   custos,
   orientacoesRo,
   canViewCosts,
+  canViewOperationalCosts,
   canEditCosts,
   canEditPassage,
   solicitacaoId,
@@ -2273,6 +2283,7 @@ function PassagemComprada({
   custos: Custo[];
   orientacoesRo: string | null;
   canViewCosts: boolean;
+  canViewOperationalCosts: boolean;
   canEditCosts: boolean;
   canEditPassage: boolean;
   solicitacaoId: string;
@@ -2320,6 +2331,7 @@ function PassagemComprada({
       outros: "Outros",
     }[custo.tipo];
   const centrosCusto = complementaryCostCenters(row, obras);
+  const visibleCosts = visibleOperationalCosts(custos);
   const centroCustoLabel = (id: string | null) =>
     id ? formatCentroCustoLabel(obras.find((obra) => obra.id === id)) : "Não identificado";
   return (
@@ -2367,6 +2379,26 @@ function PassagemComprada({
           )}
           {canEditCosts && <AdditionalOperationalCostForm solicitacaoId={solicitacaoId}
             centrosCusto={centrosCusto} onDone={onCostUpdated} />}
+        </section>
+      )}
+      {canViewOperationalCosts && visibleCosts.length > 0 && (
+        <section className="requester-operational-costs" aria-labelledby="requester-operational-costs-title">
+          <h3 id="requester-operational-costs-title">Custos operacionais</h3>
+          <div className="requester-operational-cost-list">
+            {visibleCosts.map((cost) => (
+              <div key={cost.id} className="requester-operational-cost-row">
+                <span>
+                  <strong>{visibleOperationalCostLabel(cost.tipo)}</strong>
+                  {cost.tipo === "outros" && cost.descricao && <small>{cost.descricao}</small>}
+                </span>
+                <strong>{dinheiro(Number(cost.valor))}</strong>
+              </div>
+            ))}
+            <div className="requester-operational-cost-total">
+              <span>Total de custos operacionais</span>
+              <strong>{dinheiro(visibleOperationalCostsTotal(visibleCosts))}</strong>
+            </div>
+          </div>
         </section>
       )}
       <h3 className="documents-heading">Documentos anexados</h3>
