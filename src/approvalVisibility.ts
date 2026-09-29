@@ -21,6 +21,28 @@ export function approvalStatusLabel(status: Solicitacao["aprovacao_status"]) {
   return approvalStatusLabels[normalizedApprovalStatus(status)];
 }
 
+export function approvalBadgePresentation(
+  requestStatus: Solicitacao["status"],
+  approvalStatus: Solicitacao["aprovacao_status"],
+) {
+  if (requestStatus === "recusada" && approvalStatus !== "reprovada") {
+    return {
+      className: "approval-recusada-ro",
+      label: "Interrompida por recusa RO",
+    };
+  }
+  if (requestStatus === "solicitada" && approvalStatus === "pendente") {
+    return { className: "approval-pendente", label: "Aguardando aprovação" };
+  }
+  if (approvalStatus === "reprovada") {
+    return { className: "approval-reprovada", label: "Reprovada pelo aprovador" };
+  }
+  return {
+    className: `approval-${approvalStatus || "dispensada"}`,
+    label: approvalStatusLabel(approvalStatus),
+  };
+}
+
 export function matchesApprovalFilter(
   status: Solicitacao["aprovacao_status"],
   filter: ApprovalFilter,

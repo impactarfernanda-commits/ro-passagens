@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import test from "node:test";
 import { approvalDecisionErrorMessage } from "../src/approvalErrorMessages.ts";
+import { approvalBadgePresentation } from "../src/approvalVisibility.ts";
 
 const page = fs.readFileSync("src/pages.tsx", "utf8");
 const pacote1 = fs.readFileSync("supabase/migrations/202608210001_pacote_1_aprovadores_individuais_denise.sql", "utf8");
@@ -58,7 +59,7 @@ test("interface diferencia reprovação da recusa RO sem quebrar refazer e filtr
   assert.equal(statusPertenceAoFiltro("recusada", ["solicitada"]), false);
   assert.equal(statusPertenceAoFiltro("recusada", ["em_andamento"]), false);
   assert.equal(statusPertenceAoFiltro("recusada", ["recusada"]), true);
-  assert.match(page, /row\.aprovacao_status === "reprovada" \? "Reprovada pelo aprovador"/);
+  assert.equal(approvalBadgePresentation("recusada", "reprovada").label, "Reprovada pelo aprovador");
   assert.match(page, /row\.status === "recusada" && row\.aprovacao_status !== "reprovada" && <section/);
   assert.match(page, /row\.status === "recusada" && row\.solicitante_id === userId/);
   assert.match(page, /t="Reprovada em" v=\{dataHora\(row\.reprovado_em\)\}/);

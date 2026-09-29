@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import test from "node:test";
-import { approvalStatusLabel, approvalWaitingLabel, isApprovalOperationallyReleased, matchesApprovalFilter } from "../src/approvalVisibility.ts";
+import { approvalBadgePresentation, approvalStatusLabel, approvalWaitingLabel, isApprovalOperationallyReleased, matchesApprovalFilter } from "../src/approvalVisibility.ts";
 
 const migration = fs.readFileSync("supabase/migrations/202608250001_visibilidade_operacional_aprovacoes_pendentes.sql", "utf8");
 const page = fs.readFileSync("src/pages.tsx", "utf8");
@@ -56,7 +56,7 @@ test("pendência do coordenador exige status operacional solicitado", () => {
 });
 
 test("recusa operacional não parece continuar aguardando aprovação", () => {
-  assert.match(page, /Interrompida por recusa RO/);
+  assert.equal(approvalBadgePresentation("recusada", "pendente").label, "Interrompida por recusa RO");
   assert.match(page, /Solicitação encerrada por recusa operacional\./);
   assert.match(page, /\{aprovacaoPendenteAtiva && <DT t="Tempo aguardando"/);
 });

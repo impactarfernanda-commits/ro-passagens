@@ -63,7 +63,7 @@ import { COMPRA_DATA_ALERTA, COMPRA_HORARIO_ALERTA, divergenciasDeData, horarioL
 import { aplicarResolucaoHospedagemLocal, HOSPEDAGEM_ATTACHMENT_TYPE, hospedagemOperacionalPendente, isHospedagemAttachment, justificativaHospedagemValida, normalizeResolucaoOperacional, parseHospedagemValor } from "./hospedagemOperationalRules";
 import { resolveUserLabel } from "./userLabelResolution";
 import { isEditableOperationalCost, isPassageCost, parseOperationalCostValue } from "./operationalCostRules";
-import { approvalStatusLabel, approvalWaitingLabel, isApprovalOperationallyReleased, matchesApprovalFilter, type ApprovalFilter } from "./approvalVisibility";
+import { approvalBadgePresentation, approvalStatusLabel, approvalWaitingLabel, isApprovalOperationallyReleased, matchesApprovalFilter, type ApprovalFilter } from "./approvalVisibility";
 import { approvalDecisionErrorMessage } from "./approvalErrorMessages";
 import { creationRequestErrorMessage } from "./creationErrorMessages";
 import { dispensaAprovacaoDesligamentoUrgente } from "./approvalRules";
@@ -964,6 +964,7 @@ export function Solicitacoes({
               {shown.map((r) => {
                 const roId = responsavelId(r);
                 const aprovacaoPendenteAtiva = r.status === "solicitada" && r.aprovacao_status === "pendente";
+                const approvalBadge = approvalBadgePresentation(r.status, r.aprovacao_status);
                 return (
                   <tr key={r.id} className={aprovacaoPendenteAtiva ? "approval-awaiting" : undefined}>
                     <td>
@@ -994,8 +995,8 @@ export function Solicitacoes({
                     )}
                     {(access.canViewAll || approvalsOnly) && (
                       <td>
-                        <span className={`badge approval-${r.aprovacao_status || "dispensada"}`}>
-                          {aprovacaoPendenteAtiva ? "Aguardando aprovação" : r.aprovacao_status === "reprovada" ? "Reprovada pelo aprovador" : r.status === "recusada" ? "Interrompida por recusa RO" : approvalStatusLabel(r.aprovacao_status)}
+                        <span className={`badge ${approvalBadge.className}`}>
+                          {approvalBadge.label}
                         </span>
                         {aprovacaoPendenteAtiva && <small>{approvalWaitingLabel(r.created_at)}</small>}
                         {r.aprovador_id && <small>{aprovacaoPendenteAtiva ? "Aguardando aprovação de " : "Aprovador: "}{userLabels[r.aprovador_id] || "Aprovador sem identificação"}</small>}
@@ -1795,6 +1796,7 @@ export function Detalhe({ access, userId }: { access: Access; userId: string }) 
     );
   const operacaoLiberada = isApprovalOperationallyReleased(row.aprovacao_status);
   const aprovacaoPendenteAtiva = row.status === "solicitada" && row.aprovacao_status === "pendente";
+  const approvalBadge = approvalBadgePresentation(row.status, row.aprovacao_status);
   return (
     <Page
       title={resolveSolicitacaoFuncionarioNome(row, funcionarioNomeExibicao) || "Solicitação"}
@@ -1808,8 +1810,8 @@ export function Detalhe({ access, userId }: { access: Access; userId: string }) 
     >
       <div className="detail-head">
         <StatusBadge status={statusLabel[row.status]} />
-        <span className={`badge approval-${row.aprovacao_status || "dispensada"}`}>
-          {aprovacaoPendenteAtiva ? "Aguardando aprovação" : row.aprovacao_status === "reprovada" ? "Reprovada pelo aprovador" : row.status === "recusada" ? "Interrompida por recusa RO" : approvalStatusLabel(row.aprovacao_status)}
+        <span className={`badge ${approvalBadge.className}`}>
+          {approvalBadge.label}
         </span>
         <span>{formatMotivoLabel(row.motivo)}</span>
         {row.motivo === "desligamento" && (
