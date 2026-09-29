@@ -1,7 +1,8 @@
 export function approvalDecisionErrorMessage(message: string) {
   const messages: Array<[string, string]> = [
     ["AUTENTICACAO_OBRIGATORIA", "Sua sessão expirou. Entre novamente para analisar a solicitação."],
-    ["MOTIVO_REPROVACAO_MINIMO_10_CARACTERES", "Informe o motivo da reprovação com pelo menos 10 caracteres."],
+    ["MOTIVO_REPROVACAO_INVALIDO", "Informe um motivo mais detalhado, com pelo menos 20 caracteres."],
+    ["MOTIVO_REPROVACAO_MINIMO_10_CARACTERES", "Informe um motivo mais detalhado, com pelo menos 20 caracteres."],
     ["SOLICITACAO_NAO_ENCONTRADA", "A solicitação não foi encontrada ou não está mais disponível."],
     ["SOLICITACAO_NAO_DESTINADA_A_ESTE_APROVADOR", "Esta solicitação está destinada a outro aprovador."],
     ["APROVADOR_NAO_ELEGIVEL", "Seu perfil não está habilitado para decidir esta solicitação."],

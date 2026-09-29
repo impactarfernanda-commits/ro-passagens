@@ -38,7 +38,8 @@ test("textarea possui label próprio, três linhas e largura total responsiva",(
   assert.match(css,/\.approval-rejection-field\{[^}]*flex-direction:column[^}]*width:100%/);
   assert.match(css,/\.approval-rejection-field textarea\{[^}]*min-height:86px[^}]*resize:vertical[^}]*width:100%/);
 });
-test("aprovar não exige motivo e reprovar exige dez caracteres",()=>{
-  assert.match(page,/if \(!aprovar && motivo\.trim\(\)\.length<10\)/);
+test("aprovar não exige motivo e reprovar exige vinte caracteres significativos",()=>{
+  assert.match(page,/if \(!aprovar && !detailedJustificationIsValid\(motivo\)\)/);
+  assert.match(page,/motivo\.trim\(\)\.length\}\/20 caracteres mínimos/);
   assert.match(page,/aprovar \? \{p_solicitacao_id:row\.id\} : \{p_solicitacao_id:row\.id,p_motivo:motivo\}/);
 });

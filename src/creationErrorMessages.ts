@@ -8,7 +8,9 @@ export type CreationRpcError = {
 const FALLBACK = "Não foi possível criar a solicitação. Verifique os dados informados e tente novamente.";
 
 const MESSAGES: Array<[RegExp, string]> = [
-  [/JUSTIFICATIVA_EXCECAO_OBRIGATORIA/, "Informe uma justificativa de pelo menos 10 caracteres para usar a exceção de prazo."],
+  [/JUSTIFICATIVA_EXCECAO_(INVALIDA|OBRIGATORIA)/, "Informe uma justificativa mais detalhada, com pelo menos 20 caracteres."],
+  [/ORIGEM_INVALIDA/, "Informe uma origem válida."],
+  [/DESTINO_INVALIDO/, "Informe um destino válido."],
   [/FORA_DO_PRAZO(?::|\b)/, "A data não atende ao prazo mínimo e seu perfil não está autorizado a usar a exceção de prazo."],
   [/APROVADOR_INVALIDO/, "O aprovador selecionado não está mais habilitado. Atualize a página e selecione novamente."],
   [/AUTOAPROVACAO_NAO_PERMITIDA/, "Seu perfil atual não permite aprovar a própria solicitação."],

@@ -6,7 +6,10 @@ import { creationRequestErrorMessage } from "../src/creationErrorMessages.ts";
 const message = (value: string) => creationRequestErrorMessage({ message: value });
 
 test("mapeia os códigos conhecidos da criação", () => {
-  assert.equal(message("JUSTIFICATIVA_EXCECAO_OBRIGATORIA"), "Informe uma justificativa de pelo menos 10 caracteres para usar a exceção de prazo.");
+  assert.equal(message("JUSTIFICATIVA_EXCECAO_OBRIGATORIA"), "Informe uma justificativa mais detalhada, com pelo menos 20 caracteres.");
+  assert.equal(message("JUSTIFICATIVA_EXCECAO_INVALIDA"), "Informe uma justificativa mais detalhada, com pelo menos 20 caracteres.");
+  assert.equal(message("ORIGEM_INVALIDA"), "Informe uma origem válida.");
+  assert.equal(message("DESTINO_INVALIDO"), "Informe um destino válido.");
   assert.equal(message("FORA_DO_PRAZO:2026-10-16"), "A data não atende ao prazo mínimo e seu perfil não está autorizado a usar a exceção de prazo.");
   assert.equal(message("APROVADOR_INVALIDO"), "O aprovador selecionado não está mais habilitado. Atualize a página e selecione novamente.");
   assert.equal(message("AUTOAPROVACAO_NAO_PERMITIDA"), "Seu perfil atual não permite aprovar a própria solicitação.");

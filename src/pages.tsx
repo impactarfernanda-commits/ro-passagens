@@ -71,6 +71,7 @@ import { canShowSolicitacaoDeletion, deletionErrorMessage, normalizeDeletionReas
 import { complementaryCostCenters, complementaryCostCenterValidationMessage, complementaryPassageErrorMessage } from "./complementaryPassage";
 import { additionalOperationalCostPayload, validateAdditionalOperationalCost } from "./additionalOperationalCost";
 import { visibleOperationalCostLabel, visibleOperationalCosts, visibleOperationalCostsTotal, type VisibleOperationalCost } from "./requesterOperationalCosts";
+import { DETAILED_JUSTIFICATION_MIN_LENGTH, detailedJustificationIsValid, travelLocationIsValid } from "./textQuality";
 import { autoMapHeaders, buildCollaboratorSuggestions, canKeepAsExternal, duplicateCpfRows, formatCpf, formatPhone, isSpreadsheetRows, isValidCpf, matchCollaborator, MAX_RH_XLSX_BYTES, normalizeCpf, normalizePhone, parseBirthDate, possibleMatches, resolveCollaboratorSuggestion, strongAuxiliaryMatches, validUf, type AddressField, type CollaboratorSuggestion, type ColumnMapping, type SpreadsheetRows } from "./addressImport";
 import type {
   Anexo,
@@ -1286,6 +1287,8 @@ export function NovaSolicitacao({ userId, access }: { userId: string; access: Ac
       setErro("Selecione o centro de custo atual.");
       return;
     }
+    if (!travelLocationIsValid(form.origem)) { setErro("Informe uma origem válida."); return; }
+    if (!travelLocationIsValid(form.destino)) { setErro("Informe um destino válido."); return; }
     if (!dispensaAprovacao && !form.aprovador_id) { setErro("Selecione o aprovador da solicitação."); return; }
     if (!form.pix_viajante.trim()) { setErro("Informe a chave PIX do próprio viajante."); return; }
     if (form.necessita_hospedagem && (!form.hospedagem_checkin || !form.hospedagem_checkout)) { setErro("Informe Check-in e Check-out da hospedagem."); return; }
@@ -1307,10 +1310,8 @@ export function NovaSolicitacao({ userId, access }: { userId: string; access: Ac
     }
     if(form.motivo==="folga_campo"&&folgaFuturaBloqueia(cicloFolga)){setErro(`Já existe uma solicitação de folga de campo para este funcionário em ${data(cicloFolga?.solicitacao_futura_data)}.`);return;}
     if(folgaAntecipada&&!justificativaAntecipacaoValida(form.folga_antecipacao_justificativa)){setErro("A justificativa da antecipação deve ter pelo menos 10 caracteres úteis.");return;}
-    if (foraPrazo && podeExcepcionarPrazo && solicitarExcecao && form.justificativa_excecao_prazo.trim().length < 10) {
-      setErro(
-        "A justificativa da exceção deve ter pelo menos 10 caracteres.",
-      );
+    if (foraPrazo && podeExcepcionarPrazo && solicitarExcecao && !detailedJustificationIsValid(form.justificativa_excecao_prazo)) {
+      setErro("Informe uma justificativa mais detalhada, com pelo menos 20 caracteres.");
       return;
     }
     if (form.motivo === "desligamento" && !form.desligamento_subtipo) { setErro("Selecione o tipo de desligamento."); return; }
@@ -1524,7 +1525,7 @@ export function NovaSolicitacao({ userId, access }: { userId: string; access: Ac
             Justificativa da exceção *
             <textarea
               required
-              minLength={10}
+              minLength={DETAILED_JUSTIFICATION_MIN_LENGTH}
               rows={3}
               value={form.justificativa_excecao_prazo}
               onChange={(e) =>
@@ -1534,6 +1535,7 @@ export function NovaSolicitacao({ userId, access }: { userId: string; access: Ac
                 })
               }
             />
+            <small>{form.justificativa_excecao_prazo.trim().length}/20 caracteres mínimos</small>
           </label>
         )}
         <label className="wide">
@@ -2039,8 +2041,8 @@ function AprovacaoIndividual({row,onDone}:{row:Solicitacao;onDone:()=>void}) {
   const [erro,setErro]=useState("");
   async function decidir(aprovar:boolean) {
     if (busy) return;
-    if (!aprovar && motivo.trim().length<10) {
-      setErro("Informe o motivo da reprovação com pelo menos 10 caracteres.");
+    if (!aprovar && !detailedJustificationIsValid(motivo)) {
+      setErro("Informe um motivo mais detalhado, com pelo menos 20 caracteres.");
       return;
     }
     setBusy(true);
@@ -2058,7 +2060,8 @@ function AprovacaoIndividual({row,onDone}:{row:Solicitacao;onDone:()=>void}) {
     <p>Esta solicitação foi destinada exclusivamente a você.</p>
     <label className="approval-rejection-field">
       <span>Motivo da reprovação</span>
-      <textarea rows={3} value={motivo} minLength={10} onChange={(e)=>setMotivo(e.target.value)} placeholder="Obrigatório ao reprovar"/>
+      <textarea rows={3} value={motivo} minLength={DETAILED_JUSTIFICATION_MIN_LENGTH} onChange={(e)=>setMotivo(e.target.value)} placeholder="Obrigatório ao reprovar"/>
+      <small>{motivo.trim().length}/20 caracteres mínimos</small>
     </label>
     {erro&&<div className="error">{erro}</div>}
     <div className="actions">
