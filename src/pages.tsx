@@ -69,6 +69,7 @@ import { creationRequestErrorMessage } from "./creationErrorMessages";
 import { dispensaAprovacaoDesligamentoUrgente } from "./approvalRules";
 import { canShowSolicitacaoDeletion, deletionErrorMessage, normalizeDeletionReason } from "./solicitacaoDeletion";
 import { complementaryCostCenters, complementaryCostCenterValidationMessage, complementaryPassageErrorMessage } from "./complementaryPassage";
+import { additionalOperationalCostPayload, validateAdditionalOperationalCost } from "./additionalOperationalCost";
 import { autoMapHeaders, buildCollaboratorSuggestions, canKeepAsExternal, duplicateCpfRows, formatCpf, formatPhone, isSpreadsheetRows, isValidCpf, matchCollaborator, MAX_RH_XLSX_BYTES, normalizeCpf, normalizePhone, parseBirthDate, possibleMatches, resolveCollaboratorSuggestion, strongAuxiliaryMatches, validUf, type AddressField, type CollaboratorSuggestion, type ColumnMapping, type SpreadsheetRows } from "./addressImport";
 import type {
   Anexo,
@@ -1908,6 +1909,7 @@ export function Detalhe({ access, userId }: { access: Access; userId: string }) 
       )}
       {access.canOperateRO && operacaoLiberada && !row.excluida_em && row.necessita_hospedagem && !["cancelada","recusada"].includes(row.status) && <HospedagemOperacional row={row} onResolved={atualizarResolucaoHospedagem} onDone={load} />}
       <PassagemComprada
+        row={row}
         canAddAttachments={canAddAttachment(access.canOperateRO, row)}
         anexos={row.anexos || []}
         custos={row.custos || []}
@@ -2254,6 +2256,7 @@ function HospedagemOperacional({ row, onResolved, onDone }: { row: Solicitacao; 
   </form>;
 }
 function PassagemComprada({
+  row,
   canAddAttachments,
   anexos,
   custos,
@@ -2264,6 +2267,7 @@ function PassagemComprada({
   solicitacaoId,
   onCostUpdated,
 }: {
+  row: Solicitacao;
   anexos: Anexo[];
   canAddAttachments: boolean;
   custos: Custo[];
@@ -2274,6 +2278,7 @@ function PassagemComprada({
   solicitacaoId: string;
   onCostUpdated: () => void;
 }) {
+  const { obras } = useCatalogos();
   const [erro, setErro] = useState("");
   async function abrir(anexo: Anexo) {
     setErro("");
@@ -2307,14 +2312,16 @@ function PassagemComprada({
   const outros = soma("outros");
   const totalGeral = totalPassagens + hospedagem + uber + refeicao + outros;
   const custoLabel = (custo: Custo) =>
-    custo.descricao ||
-    {
+    custo.tipo === "outros" ? "Outros" : custo.descricao || {
       passagem: "Passagem",
       hospedagem: "Hospedagem",
       uber: "Uber/local",
       refeicao: "Refeição/ajuda",
       outros: "Outros",
     }[custo.tipo];
+  const centrosCusto = complementaryCostCenters(row, obras);
+  const centroCustoLabel = (id: string | null) =>
+    id ? formatCentroCustoLabel(obras.find((obra) => obra.id === id)) : "Não identificado";
   return (
     <section className="card attachment-card">
       <div className="attachment-title">
@@ -2355,9 +2362,11 @@ function PassagemComprada({
             <div className="financial-cost-list">
               {custos.map((custo) => <OperationalCostRow key={custo.id} custo={custo}
                 label={custoLabel(custo)} canEdit={(canEditCosts && isEditableOperationalCost(custo.tipo)) || (canEditPassage && isPassageCost(custo.tipo))}
-                solicitacaoId={solicitacaoId} onDone={onCostUpdated} />)}
+                centroCustoLabel={centroCustoLabel(custo.centro_custo_id)} solicitacaoId={solicitacaoId} onDone={onCostUpdated} />)}
             </div>
           )}
+          {canEditCosts && <AdditionalOperationalCostForm solicitacaoId={solicitacaoId}
+            centrosCusto={centrosCusto} onDone={onCostUpdated} />}
         </section>
       )}
       <h3 className="documents-heading">Documentos anexados</h3>
@@ -2439,8 +2448,53 @@ function PassagemComprada({
   );
 }
 
-function OperationalCostRow({ custo, label, canEdit, solicitacaoId, onDone }: {
-  custo: Custo; label: string; canEdit: boolean; solicitacaoId: string; onDone: () => void;
+function AdditionalOperationalCostForm({ solicitacaoId, centrosCusto, onDone }: {
+  solicitacaoId: string; centrosCusto: Obra[]; onDone: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [centroCustoId, setCentroCustoId] = useState("");
+  const [valor, setValor] = useState("");
+  const [descricao, setDescricao] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [erro, setErro] = useState("");
+  function fechar() {
+    setOpen(false); setCentroCustoId(""); setValor(""); setDescricao(""); setErro("");
+  }
+  async function salvar(event: React.FormEvent) {
+    event.preventDefault();
+    const draft = { centroCustoId, valor, descricao };
+    const invalid = validateAdditionalOperationalCost(draft, centrosCusto);
+    if (invalid) { setErro(invalid); return; }
+    setBusy(true); setErro("");
+    const result = await supabase.rpc("ro_adicionar_custo_operacional",
+      additionalOperationalCostPayload(solicitacaoId, draft));
+    setBusy(false);
+    if (result.error) { setErro(result.error.message); return; }
+    fechar(); onDone();
+  }
+  if (!open) return <div className="additional-cost-action"><button type="button" className="btn secondary" onClick={()=>setOpen(true)}>
+    <Plus size={16}/>Adicionar outro custo
+  </button></div>;
+  return <form className="additional-cost-form" onSubmit={salvar}>
+    <label>Centro de custo *<select required value={centroCustoId}
+      onChange={(event)=>setCentroCustoId(event.target.value)} disabled={busy || centrosCusto.length===0}>
+      <option value="">Selecione</option>
+      {centrosCusto.map((centro)=><option key={centro.id} value={centro.id}>{formatCentroCustoLabel(centro)}</option>)}
+    </select></label>
+    <label>Valor (R$) *<input type="number" min="0.01" step="0.01" required value={valor}
+      onChange={(event)=>setValor(event.target.value)} disabled={busy}/></label>
+    <label className="wide">Descrição *<textarea required value={descricao}
+      placeholder="Ex.: Locação de veículo para deslocamento"
+      onChange={(event)=>setDescricao(event.target.value)} disabled={busy}/></label>
+    {centrosCusto.length===0 && <small className="error wide">Nenhum centro de custo elegível está disponível para esta solicitação.</small>}
+    {erro && <small className="error wide">{erro}</small>}
+    <div className="actions wide"><button type="button" className="btn secondary" disabled={busy} onClick={fechar}>Cancelar</button>
+      <button type="submit" className="btn primary" disabled={busy || centrosCusto.length===0}>{busy?"Salvando...":"Adicionar custo"}</button></div>
+  </form>;
+}
+
+function OperationalCostRow({ custo, label, centroCustoLabel, canEdit, solicitacaoId, onDone }: {
+  custo: Custo; label: string; centroCustoLabel: string; canEdit: boolean; solicitacaoId: string; onDone: () => void;
 }) {
   const [editing, setEditing] = useState(false);
   const [valor, setValor] = useState(String(custo.valor));
@@ -2460,7 +2514,7 @@ function OperationalCostRow({ custo, label, canEdit, solicitacaoId, onDone }: {
     setEditing(false); onDone();
   }
   return <div className="operational-cost-row">
-    <span><strong>{label}</strong><small>{custo.tipo === "passagem" ? "Passagem comprada" : "Custo adicional"}</small></span>
+    <span><strong>{label}</strong>{custo.tipo === "outros" && custo.descricao && <small>{custo.descricao}</small>}<small>{custo.tipo === "passagem" ? "Passagem comprada" : "Custo adicional"} · CC: {centroCustoLabel}</small></span>
     {editing ? <div className="operational-cost-editor">
       <label>Valor de {label}<input autoFocus type="number" min="0.01" step="0.01" value={valor}
         onChange={(event)=>setValor(event.target.value)} disabled={busy}/></label>
