@@ -42,6 +42,8 @@ export type Obra = {
   nome: string;
   codigo?: string | null;
   descricao?: string | null;
+  visivel_passagens?: boolean;
+  escopo_passagens?: string;
 };
 export type Perfil = {
   id: string;

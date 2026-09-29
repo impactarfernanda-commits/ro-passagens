@@ -68,6 +68,7 @@ import { approvalDecisionErrorMessage } from "./approvalErrorMessages";
 import { creationRequestErrorMessage } from "./creationErrorMessages";
 import { dispensaAprovacaoDesligamentoUrgente } from "./approvalRules";
 import { canShowSolicitacaoDeletion, deletionErrorMessage, normalizeDeletionReason } from "./solicitacaoDeletion";
+import { complementaryCostCenters, complementaryCostCenterValidationMessage, complementaryPassageErrorMessage } from "./complementaryPassage";
 import { autoMapHeaders, buildCollaboratorSuggestions, canKeepAsExternal, duplicateCpfRows, formatCpf, formatPhone, isSpreadsheetRows, isValidCpf, matchCollaborator, MAX_RH_XLSX_BYTES, normalizeCpf, normalizePhone, parseBirthDate, possibleMatches, resolveCollaboratorSuggestion, strongAuxiliaryMatches, validUf, type AddressField, type CollaboratorSuggestion, type ColumnMapping, type SpreadsheetRows } from "./addressImport";
 import type {
   Anexo,
@@ -101,7 +102,7 @@ function useCatalogos() {
       const catalogo = (data || []) as Obra[];
       if (!catalogo.length) setO([]);
       else {
-        const { data: detalhes } = await supabase.from("obras").select("id,codigo,descricao").in("id", catalogo.map((obra) => obra.id));
+        const { data: detalhes } = await supabase.from("obras").select("id,codigo,descricao,visivel_passagens,escopo_passagens").in("id", catalogo.map((obra) => obra.id));
         const porId = new Map((detalhes || []).map((obra) => [obra.id, obra]));
         setO(catalogo.map((obra) => ({ ...obra, ...porId.get(obra.id) })));
       }
@@ -2541,6 +2542,7 @@ function Compra({
   const [form, setForm] = useState<CompraForm>(
     savedDraft?.form || initialCompraForm(row),
   );
+  const centrosComplementares = complementaryCostCenters(row, obras);
   useEffect(() => {
     purchaseDraftBySolicitacaoId.set(draftKey, {
       pdfs,
@@ -2715,6 +2717,16 @@ function Compra({
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     if (extracting) return;
+    if (complementar) {
+      const centroCustoError = complementaryCostCenterValidationMessage(
+        form.centro_custo_id,
+        centrosComplementares,
+      );
+      if (centroCustoError) {
+        setErro(centroCustoError);
+        return;
+      }
+    }
     if (!complementar && hospedagemOperacionalPendente(row.necessita_hospedagem, row.resolucao_operacional?.hospedagem_utilizada)) {
       setErro("Informe primeiro se a hospedagem prevista foi contratada ou dispensada.");
       return;
@@ -2856,7 +2868,15 @@ function Compra({
             p_data_divergente_confirmada: dataDivergenteConfirmada,
             p_data_divergente_justificativa: dataDivergenteConfirmada ? justificativaData.trim() : null,
           });
-      if (error) throw new Error(error.message);
+      if (error) {
+        if (complementar && import.meta.env.DEV)
+          console.error("Falha ao registrar passagem complementar", error);
+        throw new Error(
+          complementar
+            ? complementaryPassageErrorMessage(error.message)
+            : error.message,
+        );
+      }
       purchaseDraftBySolicitacaoId.delete(draftKey);
       window.alert("Passagem registrada com sucesso.");
       onDone();
@@ -3148,6 +3168,33 @@ function Compra({
       </section>
       {complementar ? (
         <>
+          <label className="wide">
+            Centro de custo *
+            <select
+              required
+              value={form.centro_custo_id}
+              onChange={(e) =>
+                setForm({ ...form, centro_custo_id: e.target.value })
+              }
+              onInvalid={(e) => {
+                e.preventDefault();
+                setErro("Selecione o centro de custo da passagem complementar.");
+              }}
+              disabled={centrosComplementares.length === 0}
+            >
+              <option value="">Selecione o centro de custo</option>
+              {centrosComplementares.map((obra) => (
+                <option key={obra.id} value={obra.id}>
+                  {formatCentroCustoLabel(obra)}
+                </option>
+              ))}
+            </select>
+            {centrosComplementares.length === 0 && (
+              <small>
+                Nenhum centro de custo desta solicitação está disponível para lançamento de passagem complementar.
+              </small>
+            )}
+          </label>
           <label className="checkbox">
             <input
               type="checkbox"
@@ -3247,7 +3294,8 @@ function Compra({
             extracting ||
             valoresDivergentes ||
             revisaoPendente ||
-            (complementar && pdfs.length === 0)
+            (complementar &&
+              (pdfs.length === 0 || centrosComplementares.length === 0))
           }
         >
           <CheckCircle2 size={17} />
