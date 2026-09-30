@@ -69,7 +69,7 @@ test("formulário oferece exceção ao coordenador e exige dez caracteres", () =
   assert.match(page, /const podeExcepcionarPrazo = canExcepcionarPrazo\(access\.role\)/);
   assert.match(page, /Esta solicitação está fora da antecedência mínima\./);
   assert.match(page, /Justificativa da exceção \*[\s\S]*minLength=\{10\}/);
-  assert.match(page, /solicitar_excecao_prazo:podeExcepcionarPrazo&&permiteExcecaoPrazo&&solicitarExcecao/);
+  assert.match(page, /solicitar_excecao_prazo:!operadorRoPodeCadastrarRetroativa&&podeExcepcionarPrazo&&permiteExcecaoPrazo&&solicitarExcecao/);
 });
 
 test("aprovação individual permanece no payload e na RPC canônica", () => {

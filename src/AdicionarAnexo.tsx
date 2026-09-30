@@ -23,14 +23,15 @@ export function AdicionarAnexo({ solicitacaoId, solicitacao, obras, anexos, cust
   const eligibleCostCenters = useMemo(() => postPurchaseCostCenters(solicitacao, obras), [solicitacao, obras]);
   const missingCostCenter = groups.some((group) => {
     const decision = decisions[group.key];
-    return decision?.financial && !decision.existingCostId && !decision.centro_custo_id;
+    return decision?.action === "new" && !decision.centro_custo_id;
   });
+  const missingAction = groups.some((group) => !decisions[group.key]?.action);
+  const missingExistingCost = groups.some((group) => decisions[group.key]?.action === "link" && !decisions[group.key]?.existingCostId);
 
   function initializeDecisions(next: PostPurchaseDocument[]) {
     setDecisions((current) => Object.fromEntries(postPurchaseGroups(next).map((group) => {
-      const hasNew = group.documents.some((document) => !document.historicalOnly);
       return [group.key, current[group.key] || {
-        financial: hasNew && group.value > 0 && isValidFinancialPassageIdentity(group.key), value: group.value,
+        value: group.value,
         manual: group.needsReview, justification: "",
       }];
     })));
@@ -141,30 +142,42 @@ export function AdicionarAnexo({ solicitacaoId, solicitacao, obras, anexos, cust
       {groups.filter((group) => group.documents.some((document) => !document.historicalOnly)).map((group) => {
         const decision = decisions[group.key];
         const validFinancialIdentity = isValidFinancialPassageIdentity(group.key);
+        const passageCosts = custos.filter((cost) => cost.tipo === "passagem");
+        const sameKey = passageCosts.find((cost) => cost.compra_chave === group.key);
+        const sameValue = passageCosts.filter((cost) => Math.abs(Number(cost.valor) - group.value) < 0.005);
         return <article key={group.key} className="pdf-review-card">
           <strong>{group.consolidatedLocator ? `Localizador ${group.consolidatedLocator}` : "Passagem reconhecida"}</strong>
           <span>{group.consolidatedOrigin || "Origem não identificada"} → {group.consolidatedDestination || "Destino não identificado"}</span>
           <small>{group.consolidatedDeparture || "Data não identificada"} · {group.documents.map((document) => document.nome_arquivo).join(", ")}</small>
-          <label><input type="radio" name={`kind-${group.key}`} disabled={!validFinancialIdentity} checked={decision?.financial === true && !decision.existingCostId}
-            onChange={() => changeDecision(group.key, { financial: true, existingCostId: undefined, centro_custo_id: undefined })} /> Nova passagem com custo</label>
+          <small>Dados reconhecidos: {Array.from(new Set(group.documents.flatMap((document) => [document.passageiro, document.documento].filter(Boolean)))).join(" · ") || "nome/documento não identificados"} · Valor {group.value > 0 ? group.value.toLocaleString("pt-BR", { style: "currency", currency: "BRL" }) : "não identificado"}</small>
+          <span>Ação:</span>
+          <label><input type="radio" name={`kind-${group.key}`} disabled={!validFinancialIdentity} checked={decision?.action === "link"}
+            onChange={() => changeDecision(group.key, { action: "link", existingCostId: undefined, centro_custo_id: undefined, manual: true })} /> Vincular a passagem existente</label>
+          <label><input type="radio" name={`kind-${group.key}`} disabled={!validFinancialIdentity || Boolean(sameKey)} checked={decision?.action === "new"}
+            onChange={() => changeDecision(group.key, { action: "new", existingCostId: undefined, centro_custo_id: undefined, value: group.value })} /> Nova passagem com custo</label>
           {!validFinancialIdentity && <small role="alert">Não foi possível identificar esta passagem com segurança. Revise os dados ou mantenha o documento como apoio sem custo.</small>}
-          <label><input type="radio" name={`kind-${group.key}`} checked={decision?.financial === false}
-            onChange={() => changeDecision(group.key, { financial: false, existingCostId: undefined, centro_custo_id: undefined })} /> Documento de apoio / sem custo</label>
-          {custos.some((cost) => cost.tipo === "passagem") && <label><input type="radio" name={`kind-${group.key}`} disabled={!validFinancialIdentity} checked={decision?.financial === true && Boolean(decision.existingCostId)}
-            onChange={() => { const selected = custos.find((cost) => cost.tipo === "passagem"); changeDecision(group.key, { financial: true, existingCostId: selected?.id, centro_custo_id: undefined, value: Number(selected?.valor || group.value), manual: true }); }} /> Vincular manualmente a custo histórico</label>
-          }
-          {decision?.financial && <>
-            {!decision.existingCostId && <label>Centro de custo *<select required value={decision.centro_custo_id || ""}
+          <label><input type="radio" name={`kind-${group.key}`} checked={decision?.action === "support"}
+            onChange={() => changeDecision(group.key, { action: "support", existingCostId: undefined, centro_custo_id: undefined })} /> Documento de apoio / sem custo</label>
+          {sameKey && <small role="alert">Já existe uma passagem com esta compra_chave. Vincule os anexos ao custo existente.</small>}
+          {!sameKey && sameValue.length > 0 && <small role="alert">Possível duplicidade: há {sameValue.length} custo(s) de passagem com o mesmo valor. Confira os demais sinais antes de decidir.</small>}
+          {decision?.action === "link" && <>
+            <label>Passagem existente *<select required value={decision.existingCostId || ""}
+              onChange={(event) => { const selected = custos.find((cost) => cost.id === event.target.value); changeDecision(group.key, { existingCostId: event.target.value || undefined, value: Number(selected?.valor || group.value), manual: true }); }}>
+              <option value="">Selecione explicitamente</option>
+              {passageCosts.map((cost) => <option key={cost.id} value={cost.id}>{cost.descricao || "Passagem"} — {Number(cost.valor).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}{cost.compra_chave ? ` — ${cost.compra_chave}` : ""}</option>)}
+            </select></label>
+            <label>Justificativa da associação *<textarea value={decision.justification}
+              onChange={(event) => changeDecision(group.key, { justification: event.target.value })} /></label>
+            <small>Os anexos existentes serão vinculados sem reupload e sem alterar o valor do custo selecionado.</small>
+          </>}
+          {decision?.action === "new" && <>
+            <label>Centro de custo *<select required value={decision.centro_custo_id || ""}
               onChange={(event) => changeDecision(group.key, { centro_custo_id: event.target.value || undefined })}>
               <option value="">Selecione o centro de custo</option>
               {eligibleCostCenters.map((costCenter) => <option key={costCenter.id} value={costCenter.id}>
                 {[costCenter.codigo, costCenter.nome || costCenter.descricao].filter(Boolean).join(" — ")}
               </option>)}
-            </select>{!decision.centro_custo_id && <small role="alert">{POST_PURCHASE_COST_CENTER_REQUIRED}</small>}</label>}
-            {decision.existingCostId && <label>Custo histórico<select value={decision.existingCostId}
-              onChange={(event) => { const selected = custos.find((cost) => cost.id === event.target.value); changeDecision(group.key, { existingCostId: event.target.value, value: Number(selected?.valor || 0), manual: true }); }}>
-              {custos.filter((cost) => cost.tipo === "passagem").map((cost) => <option key={cost.id} value={cost.id}>{cost.descricao || "Passagem"} — {Number(cost.valor).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}</option>)}
-            </select></label>}
+            </select>{!decision.centro_custo_id && <small role="alert">{POST_PURCHASE_COST_CENTER_REQUIRED}</small>}</label>
             <label>Valor confirmado (R$)<input type="number" min="0.01" step="0.01" value={decision.value || ""}
               onChange={(event) => changeDecision(group.key, { value: Number(event.target.value), manual: Number(event.target.value) !== group.value })} /></label>
             {(decision.manual || group.needsReview) && <label>Justificativa da revisão<textarea value={decision.justification}
@@ -175,7 +188,7 @@ export function AdicionarAnexo({ solicitacaoId, solicitacao, obras, anexos, cust
       })}
       <div className="actions">
         <button type="button" className="btn secondary" disabled={busy} onClick={() => { setOpen(false); setDocuments([]); setDecisions({}); }}>Cancelar</button>
-        <button type="button" className="btn primary" disabled={busy || missingCostCenter} onClick={() => void save()}>{busy ? "Salvando..." : "Salvar após revisão"}</button>
+        <button type="button" className="btn primary" disabled={busy || missingAction || missingCostCenter || missingExistingCost} onClick={() => void save()}>{busy ? "Salvando..." : "Salvar após revisão"}</button>
       </div>
     </section>}
   </div>;

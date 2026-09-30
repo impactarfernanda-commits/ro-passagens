@@ -45,6 +45,45 @@ test("custo histórico nunca é associado automaticamente apenas pelo valor", ()
   assert.equal(payload.groups[0].associacao_historica_manual, false);
 });
 
+test("revisão sem ação explícita não vira nova passagem nem documento de apoio", () => {
+  assert.throws(() => buildPostPurchasePayload([document()], {
+    "LOC:ABC123": { value: 100, manual: false, justification: "" },
+  }, []), /Escolha uma ação/);
+});
+
+test("nova passagem com a mesma compra_chave orienta vínculo explícito", () => {
+  assert.throws(() => buildPostPurchasePayload([document()], {
+    "LOC:ABC123": { action: "new", value: 100, manual: false, justification: "", centro_custo_id: cc },
+  }, [cost("existing", 100, "LOC:ABC123")]), /Vincular a passagem existente/);
+});
+
+test("vínculo exige custo selecionado e não altera o valor existente", () => {
+  assert.throws(() => buildPostPurchasePayload([document()], {
+    "LOC:ABC123": { action: "link", value: 999, manual: true, justification: "Associação histórica conferida" },
+  }, [cost("existing", 100)]), /Selecione explicitamente/);
+  const payload = buildPostPurchasePayload([document()], {
+    "LOC:ABC123": { action: "link", value: 100, manual: true, justification: "Associação histórica conferida", existingCostId: "existing" },
+  }, [cost("existing", 100)]);
+  assert.equal(payload.groups[0].custo_existente_id, "existing");
+});
+
+test("UI histórica não pré-seleciona ação nem custo", () => {
+  const component = fs.readFileSync("src/AdicionarAnexo.tsx", "utf8");
+  assert.match(component, /action: "link", existingCostId: undefined/);
+  assert.match(component, /<option value="">Selecione explicitamente<\/option>/);
+  assert.doesNotMatch(component, /financial: hasNew/);
+  assert.doesNotMatch(component, /const selected = custos\.find\(\(cost\) => cost\.tipo === "passagem"\)/);
+});
+
+test("guarda de banco bloqueia compra_chave existente, preserva vínculo e replay", () => {
+  const sql = fs.readFileSync("supabase/migrations/202609300002_exige_vinculo_explicito_pos_compra.sql", "utf8");
+  assert.match(sql, /for update/i);
+  assert.match(sql, /custo_existente_id/);
+  assert.match(sql, /COMPRA_CHAVE_JA_EXISTE_VINCULE_CUSTO/);
+  assert.match(sql, /ro_passagem_operacoes_idempotentes/);
+  assert.match(sql, /ro_registrar_documentos_pos_compra_20260930_base/);
+});
+
 test("anexo existente é enviado por id sem exigir reupload", () => {
   const existing = document({ ref: "existing:a", existingAttachmentId: "a", storagePath: "request/a.pdf", historicalOnly: true, sourceExisting: true });
   const payload = buildPostPurchasePayload([existing], { "LOC:ABC123": { financial: true, value: 100, manual: true, justification: "Associação conferida manualmente", existingCostId: "legacy" } }, [cost("legacy", 100)]);
@@ -302,8 +341,8 @@ test("frontend apresenta seletor sem default, bloqueia ausência e traduz erro d
   const component = fs.readFileSync("src/AdicionarAnexo.tsx", "utf8");
   assert.match(component, /Centro de custo \*/);
   assert.match(component, /<option value="">Selecione o centro de custo<\/option>/);
-  assert.match(component, /disabled=\{busy \|\| missingCostCenter\}/);
-  assert.match(component, /!decision\.existingCostId && <label>Centro de custo/);
+  assert.match(component, /disabled=\{busy \|\| missingAction \|\| missingCostCenter \|\| missingExistingCost\}/);
+  assert.match(component, /decision\?\.action === "new" && <>/);
   assert.match(component, /centro_custo_id: undefined/);
   assert.equal(postPurchaseErrorMessage("CENTRO_CUSTO_NAO_PERMITIDO_PARA_SOLICITACAO"), "O centro de custo selecionado não está disponível para esta solicitação.");
   assert.equal(postPurchaseErrorMessage("COMPRA_CHAVE_CENTRO_CUSTO_DIVERGENTE"), "Esta passagem já foi registrada com outro centro de custo. Revise a seleção antes de continuar.");
@@ -311,7 +350,7 @@ test("frontend apresenta seletor sem default, bloqueia ausência e traduz erro d
 
 test("frontend desabilita custo sem identidade e apresenta mensagem antes da RPC", () => {
   const component = fs.readFileSync("src/AdicionarAnexo.tsx", "utf8");
-  assert.match(component, /disabled=\{!validFinancialIdentity\}/);
+  assert.match(component, /disabled=\{!validFinancialIdentity \|\| Boolean\(sameKey\)\}/);
   assert.match(component, /Não foi possível identificar esta passagem com segurança/);
 });
 

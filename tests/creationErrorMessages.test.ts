@@ -53,6 +53,6 @@ test("tela usa o helper e mantém log técnico estruturado apenas em desenvolvim
   const page = readFileSync(new URL("../src/pages.tsx", import.meta.url), "utf8");
   assert.match(page, /setErro\(creationRequestErrorMessage\(error\)\)/);
   assert.match(page, /import\.meta\.env\.DEV[\s\S]*console\.error\("Falha ao criar solicitação", \{ message:error\.message, code:error\.code, details:error\.details, hint:error\.hint \}\)/);
-  assert.match(page, /solicitar_excecao_prazo:podeExcepcionarPrazo&&permiteExcecaoPrazo&&solicitarExcecao/);
+  assert.match(page, /solicitar_excecao_prazo:!operadorRoPodeCadastrarRetroativa&&podeExcepcionarPrazo&&permiteExcecaoPrazo&&solicitarExcecao/);
   assert.match(page, /ro_criar_solicitacao_com_aprovador/);
 });

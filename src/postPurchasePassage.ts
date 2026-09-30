@@ -27,7 +27,9 @@ type ExistingPostPurchaseAttachment = {
 };
 export type PostPurchaseAttachmentPayload = NewPostPurchaseAttachment | ExistingPostPurchaseAttachment;
 export type PostPurchaseDecision = {
-  financial: boolean;
+  action?: "link" | "new" | "support";
+  /** Compatibilidade de chamadas internas antigas; a UI nunca usa este campo. */
+  financial?: boolean;
   value: number;
   manual: boolean;
   justification: string;
@@ -46,6 +48,8 @@ export function postPurchaseCostCenters(
 }
 
 export function postPurchaseErrorMessage(message: string) {
+  if (message.includes("COMPRA_CHAVE_JA_EXISTE_VINCULE_CUSTO"))
+    return "Esta passagem já existe nesta solicitação. Selecione Vincular a passagem existente.";
   if (message.includes("CENTRO_CUSTO_NAO_PERMITIDO_PARA_SOLICITACAO"))
     return "O centro de custo selecionado não está disponível para esta solicitação.";
   if (message.includes("COMPRA_CHAVE_CENTRO_CUSTO_DIVERGENTE"))
@@ -154,8 +158,9 @@ export function buildPostPurchasePayload(
   const adjustedDocuments = documents.map((document) => {
     const group = groups.find((candidate) => candidate.documents.some((item) => item.ref === document.ref));
     const decision = group && decisions[group.key];
-    return decision?.financial && group?.financialDocumentId === document.id
-      ? { ...document, valor: decision.value, valor_confirmado_manualmente: true }
+    const action = decision?.action ?? (decision?.existingCostId ? "link" : decision?.financial === true ? "new" : decision?.financial === false ? "support" : undefined);
+    return action !== undefined && action !== "support" && group?.financialDocumentId === document.id
+      ? { ...document, valor: decision!.value, valor_confirmado_manualmente: true }
       : document;
   });
   const canonicalCosts = new Map(buildPurchaseCosts("pos-compra", adjustedDocuments, {
@@ -163,13 +168,19 @@ export function buildPostPurchasePayload(
   }, "pos-compra").filter((cost) => cost.tipo === "passagem").map((cost) => [cost.compra_chave, cost]));
   const payloadGroups = groups.flatMap((group) => {
     const decision = decisions[group.key];
-    if (!decision?.financial) return [];
+    const action = decision?.action ?? (decision?.existingCostId ? "link" : decision?.financial === true ? "new" : decision?.financial === false ? "support" : undefined);
+    if (!decision || !action) throw new Error("Escolha uma ação para cada grupo revisado.");
+    if (action === "support") return [];
     if (!isValidFinancialPassageIdentity(group.key))
       throw new Error("Não foi possível identificar esta passagem com segurança. Revise os dados ou mantenha o documento como apoio sem custo.");
     if (!Number.isFinite(decision.value) || decision.value <= 0) throw new Error("Informe um valor maior que zero para cada nova passagem.");
-    const historicalManual = Boolean(decision.existingCostId);
+    const historicalManual = action === "link";
+    if (historicalManual && !decision.existingCostId)
+      throw new Error("Selecione explicitamente a passagem existente que receberá os anexos.");
     if (historicalManual && !costs.some((cost) => cost.id === decision.existingCostId && cost.tipo === "passagem"))
       throw new Error("Selecione um custo histórico de passagem válido.");
+    if (action === "new" && costs.some((cost) => cost.tipo === "passagem" && cost.compra_chave === group.key))
+      throw new Error("Esta passagem já existe nesta solicitação. Selecione Vincular a passagem existente.");
     if (!historicalManual && !decision.centro_custo_id)
       throw new Error(POST_PURCHASE_COST_CENTER_REQUIRED);
     const justification = normalizePostPurchaseJustification(decision.justification);
