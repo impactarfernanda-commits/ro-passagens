@@ -68,7 +68,7 @@ test("PDF sem texto ou sem valor falha fechado", () => {
   assert.equal(costs.length, 0);
 });
 
-test("documento financeiro ambíguo exige confirmação manual", () => {
+test("compra normal preserva documento genérico com valor confirmado manualmente", () => {
   const ambiguous = {
     id: "ambiguous", nome_arquivo: "documento.pdf", valor: 250,
     tipo_documento: "documento" as const,

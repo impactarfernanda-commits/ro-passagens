@@ -56,6 +56,7 @@ export type Custo = {
   descricao: string | null;
   valor: number;
   centro_custo_id: string | null;
+  compra_chave?: string | null;
 };
 export type Notificacao = {
   id: string;
@@ -91,6 +92,8 @@ export type Anexo = {
   uploaded_by: string | null;
   criado_em: string;
   created_at: string;
+  conteudo_sha256?: string | null;
+  custo_id?: string | null;
 };
 export type Solicitacao = {
   id: string;

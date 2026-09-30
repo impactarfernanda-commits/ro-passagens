@@ -2405,7 +2405,7 @@ function PassagemComprada({
         </section>
       )}
       <h3 className="documents-heading">Documentos anexados</h3>
-      {canAddAttachments && <AdicionarAnexo solicitacaoId={solicitacaoId} onDone={onCostUpdated} />}
+      {canAddAttachments && <AdicionarAnexo solicitacaoId={solicitacaoId} solicitacao={row} obras={obras} anexos={anexosPassagem} custos={custos} onDone={onCostUpdated} />}
       {anexosPassagem.length === 0 ? (
         <p className="attachment-empty">Nenhum PDF anexado.</p>
       ) : (
@@ -2423,8 +2423,9 @@ function PassagemComprada({
                     {anexo.complementar ? " · Complementar" : ""}
                   </strong>
                   <small>
-                    Partida: {dataHora(anexo.partida_em)} · Documento de apoio,
-                    sem custo financeiro próprio
+                    Partida: {dataHora(anexo.partida_em)} · {anexo.custo_id
+                      ? `Vinculado ao custo de passagem — ${dinheiro(Number(custos.find((custo) => custo.id === anexo.custo_id)?.valor || 0))}`
+                      : "Documento de apoio / sem custo"}
                   </small>
                   {anexo.imprevisto && (
                     <small className="sensitive">Imprevisto</small>

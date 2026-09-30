@@ -185,6 +185,19 @@ export function extractPassagemSignature(document: PassagemDocument) {
   ].join("|");
 }
 
+export function isValidFinancialPassageIdentity(value: string) {
+  const key = value.trim();
+  if (!key || /^PENDENTE:/i.test(key)) return false;
+  if (/^(LOC|BIL):[A-Z0-9]+(?: [A-Z0-9]+)*$/i.test(key)) return true;
+  const parts = key.split("|");
+  if (parts.length !== 6) return false;
+  const [passenger, document, origin, destination, departure] = parts.map((part) => part.trim());
+  const hasPersonIdentity = Boolean(passenger || document);
+  const hasRoute = Boolean(origin && destination);
+  const hasDeparture = Boolean(departure && /^[0-9]{8,14}$/.test(departure));
+  return (hasPersonIdentity && (hasRoute || hasDeparture)) || (hasRoute && hasDeparture);
+}
+
 export function groupPdfDocumentsByPassagem(
   documents: PassagemDocument[],
 ): PassagemGroup[] {

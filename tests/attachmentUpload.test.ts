@@ -86,15 +86,15 @@ test("falhas limpam somente o novo objeto e nunca removem metadados anteriores",
   }
 });
 
-test("detalhe recarrega anexos e preserva autoria; UX de compra continua opcional", () => {
+test("detalhe recarrega anexos e o novo fluxo pós-compra usa RPC atômica", () => {
   const page = fs.readFileSync("src/pages.tsx", "utf8");
   const component = fs.readFileSync("src/AdicionarAnexo.tsx", "utf8");
   assert.match(page, /canAddAttachments=\{canAddAttachment\(access.canOperateRO, row\)\}/);
-  assert.match(page, /AdicionarAnexo solicitacaoId=\{solicitacaoId\} onDone=\{onCostUpdated\}/);
-  assert.match(component, /if \(added\) onDone\(\)/);
+  assert.match(page, /AdicionarAnexo solicitacaoId=\{solicitacaoId\} solicitacao=\{row\} obras=\{obras\} anexos=\{anexosPassagem\} custos=\{custos\} onDone=\{onCostUpdated\}/);
+  assert.match(component, /ro_registrar_documentos_pos_compra/);
   assert.match(component, /multiple disabled=\{busy\}/);
   assert.match(page, /anexo.criado_em \|\| anexo.created_at/);
   assert.match(page, /Selecionar PDFs das passagens \(opcional\)/);
   assert.match(page, /PDF\(s\) selecionado\(s\). Confira/);
-  assert.doesNotMatch(component, /\.rpc\(|\.update\(|\.delete\(/);
+  assert.doesNotMatch(component, /from\("ro_passagem_anexos"\)\.insert/);
 });
