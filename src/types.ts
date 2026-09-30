@@ -57,6 +57,7 @@ export type Custo = {
   valor: number;
   centro_custo_id: string | null;
   compra_chave?: string | null;
+  passagem_complementar?: boolean;
 };
 export type Notificacao = {
   id: string;

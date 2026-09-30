@@ -69,6 +69,7 @@ import { creationRequestErrorMessage } from "./creationErrorMessages";
 import { dispensaAprovacaoDesligamentoUrgente } from "./approvalRules";
 import { canShowSolicitacaoDeletion, deletionErrorMessage, normalizeDeletionReason } from "./solicitacaoDeletion";
 import { complementaryCostCenters, complementaryCostCenterValidationMessage, complementaryPassageErrorMessage } from "./complementaryPassage";
+import { custosDePassagensComplementares } from "./dashboardImprevistos";
 import { additionalOperationalCostPayload, validateAdditionalOperationalCost } from "./additionalOperationalCost";
 import { visibleOperationalCostLabel, visibleOperationalCosts, visibleOperationalCostsTotal, type VisibleOperationalCost } from "./requesterOperationalCosts";
 import { DETAILED_JUSTIFICATION_MIN_LENGTH, detailedJustificationIsValid, travelLocationIsValid } from "./textQuality";
@@ -282,6 +283,7 @@ type DashboardMonthlyCost = {
   descricao: string | null;
   valor: number;
   created_at: string;
+  passagem_complementar: boolean;
   solicitacao: {
     id: string;
     status: Status;
@@ -343,7 +345,7 @@ export function Dashboard({ access }: { access: Access }) {
       supabase
         .from("ro_passagem_custos")
         .select(
-          "id,solicitacao_id,tipo,descricao,valor,created_at,solicitacao:ro_passagem_solicitacoes!inner(id,status,motivo,houve_imprevisto,excluida_em,funcionario_id,colaborador_id,funcionario:funcionarios(id,nome),anexos:ro_passagem_anexos(complementar,imprevisto))",
+          "id,solicitacao_id,tipo,descricao,valor,created_at,passagem_complementar,solicitacao:ro_passagem_solicitacoes!inner(id,status,motivo,houve_imprevisto,excluida_em,funcionario_id,colaborador_id,funcionario:funcionarios(id,nome))",
         )
         .is("solicitacao.excluida_em", null)
         .gte("created_at", inicioMes)
@@ -370,17 +372,7 @@ export function Dashboard({ access }: { access: Access }) {
       .filter((custo) => custo.tipo === "passagem")
       .map((custo) => custo.solicitacao_id),
   );
-  const custosImprevistos = custosMensais.filter((custo) => {
-    const descricao = custo.descricao?.toLocaleLowerCase("pt-BR") || "";
-    return (
-      custo.solicitacao.houve_imprevisto ||
-      descricao.includes("complementar") ||
-      descricao.includes("imprevisto") ||
-      custo.solicitacao.anexos?.some(
-        (anexo) => anexo.complementar || anexo.imprevisto,
-      )
-    );
-  });
+  const custosImprevistos = custosDePassagensComplementares(custosMensais);
   const abertas = rows.filter(
     (r) => statusContaComoAberto(r.status),
   );
