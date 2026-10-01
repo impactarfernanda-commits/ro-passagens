@@ -61,12 +61,14 @@ export type Custo = {
 };
 export type Notificacao = {
   id: string;
+  solicitacao_id?: string;
   canal: string;
   destinatario_tipo: string;
   destinatario?: string | null;
   mensagem: string;
   status: string;
   created_at: string;
+  lida_em?: string | null;
 };
 export type Historico = {
   id: string;

@@ -46,6 +46,15 @@ const EMPTY_ACCESS: Access = {
   isDenise: false,
 };
 
+function accessLabel(access: Access) {
+  if (access.isRO) return "Equipe RO";
+  if (access.isRh) return "Recursos Humanos";
+  if (access.role === "diretor") return "Diretoria";
+  if (access.role === "gerente") return "Gerência";
+  if (access.role === "coordenador") return "Coordenação";
+  return "Solicitante";
+}
+
 export function App() {
   const location = useLocation();
   const [session, setSession] = useState<Session | null>(null);
@@ -54,12 +63,14 @@ export function App() {
   const [accessLoading, setAccessLoading] = useState(false);
   const [side, setSide] = useState(false);
   const [access, setAccess] = useState<Access>(EMPTY_ACCESS);
+  const [userName, setUserName] = useState("");
   const clearLocalAuthState = useCallback(() => {
     setSession(null);
     setRecoveryOnly(false);
     setAccess(EMPTY_ACCESS);
     setAccessLoading(false);
     setSide(false);
+    setUserName("");
   }, []);
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => {
@@ -82,6 +93,7 @@ export function App() {
     setAccessLoading(true);
     Promise.all([
       supabase.from("user_roles").select("role").eq("user_id", session.user.id),
+      supabase.from("users_profiles").select("full_name").eq("id", session.user.id).maybeSingle(),
       supabase
         .from("ro_responsaveis")
         .select("id")
@@ -94,11 +106,12 @@ export function App() {
       supabase.rpc("ro_is_approval_candidate"),
       supabase.rpc("ro_is_denise"),
     ])
-      .then(([roles, ro, systemAdmin, rh, manageRh, approver, denise]) => {
+      .then(([roles, profile, ro, systemAdmin, rh, manageRh, approver, denise]) => {
         const names = (roles.data || []).map((r) => String(r.role));
         const role = names.includes("diretor") ? "diretor" : names.includes("gerente") ? "gerente" : names[0] || null;
         const isAdmin = names.some((r) => ["gerente", "diretor"].includes(r));
         const isRO = Boolean(ro.data);
+        setUserName(profile.data?.full_name || session.user.user_metadata?.full_name || session.user.email || "Usuário");
         setAccess({
           role,
           isRO,
@@ -146,9 +159,11 @@ export function App() {
               canImportAddresses={canAccessAddressImport}
               isRh={access.isRh}
               canApprove={access.canApprove}
+              userName={userName}
+              profileLabel={accessLabel(access)}
             />
             <section className="content">
-              <Header onMenu={() => setSide(true)} />
+              <Header onMenu={() => setSide(true)} userId={session.user.id} />
               <Routes>
                 <Route
                   path="/painel"
