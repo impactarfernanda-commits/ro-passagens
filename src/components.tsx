@@ -137,7 +137,10 @@ function NotificationCenter({ userId }: { userId: string }) {
   const [items, setItems] = useState<NotificationRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [markingAll, setMarkingAll] = useState(false);
+  const [markAllError, setMarkAllError] = useState("");
   const root = useRef<HTMLDivElement>(null);
+  const markingAllRef = useRef(false);
   const navigate = useNavigate();
   const load = useCallback(async () => {
     setLoading(true);
@@ -157,6 +160,21 @@ function NotificationCenter({ userId }: { userId: string }) {
     return () => document.removeEventListener("mousedown", close);
   }, [open]);
   const unread = items.filter((item) => !item.lida_em).length;
+  async function markAllAsRead() {
+    if (markingAllRef.current || unread === 0) return;
+    markingAllRef.current = true;
+    setMarkingAll(true);
+    setMarkAllError("");
+    const { error: markError } = await supabase.rpc("ro_marcar_todas_notificacoes_lidas");
+    if (markError) {
+      setMarkAllError("Não foi possível marcar todas como lidas.");
+    } else {
+      const readAt = new Date().toISOString();
+      setItems((current) => current.map((item) => item.lida_em ? item : { ...item, lida_em: readAt }));
+    }
+    markingAllRef.current = false;
+    setMarkingAll(false);
+  }
   async function openNotification(item: NotificationRow) {
     if (!item.lida_em) {
       const { error: markError } = await supabase.rpc("ro_marcar_notificacao_lida", { p_notificacao_id: item.id });
@@ -176,7 +194,14 @@ function NotificationCenter({ userId }: { userId: string }) {
       </button>
       {open && (
         <section className="notification-panel" aria-label="Notificações">
-          <div className="notification-head"><strong>Notificações</strong>{unread > 0 && <span>{unread} não {unread === 1 ? "lida" : "lidas"}</span>}</div>
+          <div className="notification-head">
+            <strong>Notificações</strong>
+            {unread > 0 && <div className="notification-head-actions">
+              <span>{unread} não {unread === 1 ? "lida" : "lidas"}</span>
+              <button type="button" disabled={markingAll} onClick={() => void markAllAsRead()}>{markingAll ? "Marcando..." : "Marcar todas como lidas"}</button>
+            </div>}
+          </div>
+          {markAllError && <div className="notification-action-error" aria-live="polite">{markAllError}</div>}
           <div className="notification-list">
             {loading ? <div className="notification-state">Carregando...</div> : error ? <div className="notification-state error">{error}</div> : !items.length ? <div className="notification-state">Você não tem notificações.</div> : items.map((item) => (
               <button type="button" className={`notification-item ${item.lida_em ? "read" : "unread"}`} key={item.id} onClick={() => void openNotification(item)}>
