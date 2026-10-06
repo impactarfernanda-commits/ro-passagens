@@ -40,7 +40,7 @@ test("ano incompleto bloqueia",()=>assert.deepEqual(calcularDataMinima(sp("2026-
 test("travessia de ano exige os dois calendários",()=>assert.deepEqual(calcularDataMinima(sp("2026-12-30T10:00:00"),"dias_uteis",5,[],anos2026).anosPendentes,[2027]));
 
 test("usuário comum não vê admissão e vê recesso",()=>{const r=motivosPermitidos("assistente",false);assert.equal(r.includes("admissao"),false);assert.equal(r.includes("recesso"),true);});
-test("RH ativo vê somente três motivos",()=>assert.deepEqual(motivosPermitidos("assistente",true),["admissao","desligamento","inicio_obra"]));
+test("RH ativo vê somente os quatro motivos próprios",()=>assert.deepEqual(motivosPermitidos("assistente",true),["admissao","desligamento","inicio_obra","viagem_administrativa"]));
 test("RH inativo volta às permissões comuns",()=>assert.equal(motivosPermitidos("assistente",false).includes("admissao"),false));
 test("RO sem RH não recebe admissão",()=>assert.equal(motivosPermitidos("coordenador",false).includes("admissao"),false));
 test("gerente vê todos os motivos de criação",()=>assert.equal(motivosPermitidos("gerente",false).length,10));
@@ -54,7 +54,7 @@ test("default administrativo não impede seleção manual de outros motivos",()=
 test("Fernanda administra com e-mail case-insensitive",()=>{assert.equal(isFernandaAdmin("FERNANDA.SOUZA@TANKSBR.COM.BR"),true);assert.equal(isFernandaAdmin("fernanda.souza@tanksbr.com.br"),true);});
 test("outro gerente ou diretor não administra",()=>assert.equal(isFernandaAdmin("diretor@tanksbr.com.br"),false));
 test("usuário sem role não vê Admissão",()=>assert.equal(motivosPermitidos(null,false).includes("admissao"),false));
-test("usuário sem role RH fica limitado aos motivos RH",()=>assert.deepEqual(motivosPermitidos(null,true),["admissao","desligamento","inicio_obra"]));
+test("usuário sem role RH fica limitado aos motivos RH",()=>assert.deepEqual(motivosPermitidos(null,true),["admissao","desligamento","inicio_obra","viagem_administrativa"]));
 test("usuário sem role não ultrapassa prazo",()=>assert.ok(validar({role:null,dataIda:"2026-08-10"}).bloqueios.includes("FORA_DO_PRAZO")));
 test("usuário sem role com justificativa continua bloqueado",()=>assert.ok(validar({role:null,dataIda:"2026-08-10",justificativa:"Justificativa suficientemente longa"}).bloqueios.includes("FORA_DO_PRAZO")));
 test("somente gerente ou diretor real usa exceção",()=>{assert.equal(validar({role:"gerente",dataIda:"2026-08-10",solicitarExcecao:true,justificativa:"Justificativa suficientemente longa"}).bloqueios.length,0);assert.equal(validar({role:"diretor",dataIda:"2026-08-10",solicitarExcecao:true,justificativa:"Justificativa suficientemente longa"}).bloqueios.length,0);});

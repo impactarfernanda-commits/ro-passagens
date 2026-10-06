@@ -47,6 +47,12 @@ test("funcionário normal e fallback continuam funcionando",()=>{
   assert.equal(resolveSolicitacaoFuncionarioNome(row({funcionario_id:null,colaborador_id:"p1"})),null);
 });
 
+test("viajante manual é resolvido sem identidade cadastrada",()=>{
+  const manual=row({funcionario_id:null,colaborador_id:null,viajante_nome_informado:"  MARIA MANUAL  "});
+  assert.equal(resolveSolicitacaoFuncionarioNome(manual),"MARIA MANUAL");
+  assert.equal(solicitacaoCorrespondeBuscaPessoa(manual,"maria"),true);
+});
+
 for(const busca of ["jose","José da Silva","SILVA"])
   test(`busca normalizada usa nome seguro da solicitação: ${busca}`,()=>{
     assert.equal(solicitacaoCorrespondeBuscaPessoa(row({funcionario_id:null,colaborador_id:"p1"}),busca,"JOSÉ DA SILVA"),true);

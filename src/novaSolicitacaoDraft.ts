@@ -1,9 +1,11 @@
 import type { DesligamentoSubtipo, Motivo } from "./types";
 
-export const NOVA_SOLICITACAO_DRAFT_VERSION = 2;
+export const NOVA_SOLICITACAO_DRAFT_VERSION = 3;
 export const NOVA_SOLICITACAO_DRAFT_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 
 export type NovaSolicitacaoForm = {
+  viajante_modo: "cadastrado" | "manual";
+  viajante_nome_informado: string;
   funcionario_id: string;
   aprovador_id: string;
   obra_id: string;
@@ -47,6 +49,7 @@ export type NovaSolicitacaoDraftDocument = {
 type StoredDraft = NovaSolicitacaoDraftData & { version: number; updatedAt: string };
 
 export const emptyNovaSolicitacaoForm = (): NovaSolicitacaoForm => ({
+  viajante_modo: "cadastrado", viajante_nome_informado: "",
   funcionario_id: "", aprovador_id: "", obra_id: "", origem: "", destino: "", motivo: "",
   desligamento_subtipo: "", data_ida: "", data_retorno: "", destino_retorno: "",
   centro_custo_retorno_id: "", retorno_indefinido: false,
@@ -60,7 +63,7 @@ export const emptyNovaSolicitacaoForm = (): NovaSolicitacaoForm => ({
 export const novaSolicitacaoDraftKey = (userId: string) => `ro:nova-solicitacao:draft:${userId}`;
 
 export function hasDraftContent(data: NovaSolicitacaoDraftData) {
-  return Object.values(data.form).some((value) => typeof value === "boolean" ? value : Boolean(value.trim())) ||
+  return Object.entries(data.form).some(([key, value]) => key !== "viajante_modo" && (typeof value === "boolean" ? value : Boolean(value.trim()))) ||
     data.solicitarExcecao || data.destinoDiferente || Boolean(data.justificativaDestino.trim());
 }
 
@@ -75,7 +78,7 @@ export function parseDraft(raw: string | null, now = Date.now()): StoredDraft | 
   try {
     const value = JSON.parse(raw) as Partial<StoredDraft>;
     const updatedAt = Date.parse(value.updatedAt || "");
-    if (![1, NOVA_SOLICITACAO_DRAFT_VERSION].includes(value.version || 0) || !value.form ||
+    if (![1, 2, NOVA_SOLICITACAO_DRAFT_VERSION].includes(value.version || 0) || !value.form ||
       !Number.isFinite(updatedAt) || now - updatedAt > NOVA_SOLICITACAO_DRAFT_MAX_AGE_MS) return null;
     const base = emptyNovaSolicitacaoForm();
     const form = Object.fromEntries(Object.entries(base).map(([key, fallback]) => {
@@ -92,6 +95,12 @@ export function parseDraft(raw: string | null, now = Date.now()): StoredDraft | 
       documento: isDraftDocument(value.documento) ? value.documento : null,
     };
   } catch { return null; }
+}
+
+export function alternarModoViajante(form: NovaSolicitacaoForm, modo: "cadastrado" | "manual") {
+  return modo === "manual"
+    ? { ...form, viajante_modo: modo, funcionario_id: "" }
+    : { ...form, viajante_modo: modo, viajante_nome_informado: "" };
 }
 
 function isDraftDocument(value: unknown): value is NovaSolicitacaoDraftDocument {

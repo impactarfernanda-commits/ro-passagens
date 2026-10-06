@@ -11,7 +11,7 @@ export type ValidacaoInput = {
   observacoesSolicitante?: string;
   canUseAdministrativeNull?: boolean;
 };
-export const RH_MOTIVOS: Motivo[] = ["admissao", "desligamento", "inicio_obra"];
+export const RH_MOTIVOS: Motivo[] = ["admissao", "desligamento", "inicio_obra", "viagem_administrativa"];
 export const MOTIVOS_CRIACAO: Motivo[] = ["ferias", "folga_campo", "desligamento", "transferencia_obra", "admissao", "inicio_obra", "retorno_obra", "recesso", "viagem_administrativa", "afastamento"];
 
 export const isGerencial = (role: string | null) => role === "gerente" || role === "diretor";
@@ -26,7 +26,13 @@ export function getPrimeiroEmbarque(datas: Array<string | null | undefined>) {
   return datas.filter((v): v is string => Boolean(v && !Number.isNaN(new Date(v).getTime())))
     .sort((a, b) => new Date(a).getTime() - new Date(b).getTime())[0] || null;
 }
-export function regraPrazo(motivo: Motivo | null, subtipo?: DesligamentoSubtipo | null) {
+export function regraPrazo(motivo: Motivo | null, subtipo?: DesligamentoSubtipo | null, isRh = false) {
+  if (isRh) {
+    if (motivo === "admissao") return { codigo: "rh_admissao", tipo: "dias_corridos" as const, quantidade: 7 };
+    if (motivo === "inicio_obra") return { codigo: "rh_inicio_obra", tipo: "dias_corridos" as const, quantidade: 4 };
+    if (motivo === "desligamento" && subtipo === "programado_outros") return { codigo: "rh_desligamento_programado_outros", tipo: "dias_corridos" as const, quantidade: 5 };
+    if (motivo === "viagem_administrativa") return { codigo: "rh_viagem_administrativa", tipo: "sem_prazo_minimo" as const, quantidade: 0 };
+  }
   if (motivo === "desligamento") {
     if (subtipo === "justa_causa" || subtipo === "pedido_demissao") return { codigo: `desligamento_${subtipo}`, tipo: "sem_prazo_minimo" as const, quantidade: 0 };
     if (subtipo === "ma_conduta") return { codigo: "desligamento_ma_conduta", tipo: "dias_uteis" as const, quantidade: 5 };
@@ -46,8 +52,8 @@ export function motivoAoSelecionarFuncionario(funcionario: { funcionario_id?: st
   return funcionario && !funcionario.funcionario_id ? "viagem_administrativa" as const : motivoAtual;
 }
 
-export function motivoPermiteExcecaoPrazo(motivo: Motivo | null, subtipo?: DesligamentoSubtipo | null) {
-  return regraPrazo(motivo, subtipo).tipo !== "sem_prazo_minimo";
+export function motivoPermiteExcecaoPrazo(motivo: Motivo | null, subtipo?: DesligamentoSubtipo | null, isRh = false) {
+  return regraPrazo(motivo, subtipo, isRh).tipo !== "sem_prazo_minimo";
 }
 const zonedParts = (d: Date) => Object.fromEntries(new Intl.DateTimeFormat("en-CA", { timeZone: "America/Sao_Paulo", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).formatToParts(d).map((p) => [p.type, p.value]));
 const calendarDate = (d: Date) => { const p=zonedParts(d); return new Date(Date.UTC(Number(p.year),Number(p.month)-1,Number(p.day),12)); };
@@ -76,9 +82,9 @@ export function categoriaDocumento(subtipo?: DesligamentoSubtipo | null) {
   return null;
 }
 
-export function mensagemAntecedencia(motivo: Motivo | null, subtipo?: DesligamentoSubtipo | null) {
+export function mensagemAntecedencia(motivo: Motivo | null, subtipo?: DesligamentoSubtipo | null, isRh = false) {
   if (!motivo || (motivo === "desligamento" && !subtipo)) return null;
-  const regra = regraPrazo(motivo, subtipo);
+  const regra = regraPrazo(motivo, subtipo, isRh);
   if (regra.tipo === "sem_prazo_minimo") return "Sem antecedência mínima.";
   return `Antecedência mínima: ${regra.quantidade} ${regra.tipo === "dias_uteis" ? "dias úteis" : "dias corridos"}.`;
 }
@@ -108,7 +114,7 @@ export function validarSolicitacao(input: ValidacaoInput) {
   const hoje=calcularDataMinima(input.agora,"sem_prazo_minimo",0).data;
   const dataIda=input.dataIda||"";
   if(!/^\d{4}-\d{2}-\d{2}$/.test(dataIda))bloqueios.push("DATA_IDA_OBRIGATORIA"); else if(dataIda<hoje)bloqueios.push("DATA_IDA_NO_PASSADO");
-  const regra=regraPrazo(input.motivo,input.desligamentoSubtipo); const calculo=calcularDataMinima(input.agora,regra.tipo,regra.quantidade,input.diasNaoUteis,input.anos);
+  const regra=regraPrazo(input.motivo,input.desligamentoSubtipo,input.isRh); const calculo=calcularDataMinima(input.agora,regra.tipo,regra.quantidade,input.diasNaoUteis,input.anos);
   if(calculo.anosPendentes.length)bloqueios.push(`CALENDARIO_INCOMPLETO:${calculo.anosPendentes[0]}`);
   const foraDoPrazo=Boolean(dataIda&&dataIda<calculo.data);
   if(foraDoPrazo&&!podeExcepcionar)bloqueios.push("FORA_DO_PRAZO");

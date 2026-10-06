@@ -30,7 +30,7 @@ Deno.serve(async(request)=>{
   for(const item of(claimed||[])as OutboxRow[]){
     const finish=(status:string,email:string|null=null,providerId:string|null=null,error:string|null=null,next:string|null=null)=>admin.rpc("ro_finalizar_email_outbox",{p_id:item.id,p_worker_id:workerId,p_status:status,p_email:email,p_provider_message_id:providerId,p_ultimo_erro:error,p_proxima_tentativa_em:next});
     if(item.tipo_evento!=="aprovacao_pendente"){await finish("falha_permanente",null,null,"Tipo de evento não suportado");continue;}
-    const {data:sol}=await admin.from("ro_passagem_solicitacoes").select("id,solicitante_id,aprovador_id,aprovacao_status,excluida_em,funcionario_id,colaborador_id,origem,destino,data_ida,data_retorno").eq("id",item.solicitacao_id).maybeSingle();
+    const {data:sol}=await admin.from("ro_passagem_solicitacoes").select("id,solicitante_id,aprovador_id,aprovacao_status,excluida_em,funcionario_id,colaborador_id,viajante_nome_informado,origem,destino,data_ida,data_retorno").eq("id",item.solicitacao_id).maybeSingle();
     if(!sol||sol.excluida_em||sol.aprovacao_status!=="pendente"||sol.aprovador_id!==item.destinatario_user_id){await finish("cancelado",null,null,"Evento não está mais pendente");results.push({id:item.id,status:"cancelado"});continue;}
     const userResult=await admin.auth.admin.getUserById(item.destinatario_user_id),recipient=userResult.data.user as typeof userResult.data.user&{banned_until?:string};
     if(!recipient||recipient.deleted_at||(recipient.banned_until&&new Date(recipient.banned_until)>new Date())||!validEmail(recipient.email)){await finish("falha_permanente",null,null,"Destinatário indisponível ou sem e-mail válido");results.push({id:item.id,status:"falha_permanente"});continue;}
@@ -41,7 +41,7 @@ Deno.serve(async(request)=>{
       sol.funcionario_id?admin.from("funcionarios").select("nome").eq("id",sol.funcionario_id).maybeSingle():Promise.resolve({data:null}),
       sol.colaborador_id?admin.from("ro_funcionarios_enderecos_privados").select("nome").eq("id",sol.colaborador_id).maybeSingle():Promise.resolve({data:null}),
     ]);
-    const html=approvalPendingHtml({approverName:approverProfile?.full_name||recipient.user_metadata?.full_name||"Aprovador",traveler:privateTraveler?.nome||traveler?.nome||null,requester:requesterProfile?.full_name||null,origin:sol.origem,destination:sol.destino,outboundDate:sol.data_ida,returnDate:sol.data_retorno,link:`${appUrl}/solicitacoes/${sol.id}`});
+    const html=approvalPendingHtml({approverName:approverProfile?.full_name||recipient.user_metadata?.full_name||"Aprovador",traveler:sol.viajante_nome_informado||privateTraveler?.nome||traveler?.nome||null,requester:requesterProfile?.full_name||null,origin:sol.origem,destination:sol.destino,outboundDate:sol.data_ida,returnDate:sol.data_retorno,link:`${appUrl}/solicitacoes/${sol.id}`});
     try{
       const sent=await sendSmtpMail(transport,smtp,{outboxId:item.id,to:email,subject:item.assunto,html});
       const providerId=sent.messageId||null;

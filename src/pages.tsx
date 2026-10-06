@@ -57,7 +57,7 @@ import { resumoStatusSolicitacao, solicitacaoStatusOptions, statusPertenceAoFilt
 import { attachStatusFilterDismissal } from "./statusFilterDismissal";
 import { normalizeSolicitacoesFilters, readSolicitacoesFilters, writeSolicitacoesFilters, type SolicitacoesFilters } from "./solicitacoesFilterPersistence";
 import { CostCenterCombobox } from "./CostCenterCombobox";
-import { draftPrivateRef, emptyNovaSolicitacaoForm, hasDraftContent, NOVA_SOLICITACAO_DRAFT_MAX_AGE_MS, novaSolicitacaoDraftKey, parseDraft, serializeDraft, validateDraftCatalogIds, type NovaSolicitacaoDraftData, type NovaSolicitacaoDraftDocument } from "./novaSolicitacaoDraft";
+import { alternarModoViajante, draftPrivateRef, emptyNovaSolicitacaoForm, hasDraftContent, NOVA_SOLICITACAO_DRAFT_MAX_AGE_MS, novaSolicitacaoDraftKey, parseDraft, serializeDraft, validateDraftCatalogIds, type NovaSolicitacaoDraftData, type NovaSolicitacaoDraftDocument } from "./novaSolicitacaoDraft";
 import { cleanupExpiredDraftPrivate, deleteDraftPrivate, readDraftPrivate, removeDraftDocument, saveDraftDocument, saveDraftPix } from "./novaSolicitacaoDraftPrivate";
 import { COMPRA_DATA_ALERTA, COMPRA_HORARIO_ALERTA, divergenciasDeData, horarioLocalDaPartida, partidaAnteriorAoSolicitado } from "./passagemOperationalRules";
 import { aplicarResolucaoHospedagemLocal, HOSPEDAGEM_ATTACHMENT_TYPE, hospedagemOperacionalPendente, isHospedagemAttachment, justificativaHospedagemValida, normalizeResolucaoOperacional, parseHospedagemValor } from "./hospedagemOperationalRules";
@@ -1160,7 +1160,7 @@ export function NovaSolicitacao({ userId, access }: { userId: string; access: Ac
   },[form.funcionario_id,form.motivo,funcionarios]);
   const motivoResidencial=["ferias","folga_campo","recesso"].includes(form.motivo);
   useEffect(()=>{setDestinoResidencial(null);setDestinoDiferente(false);setJustificativaDestino("");if(!motivoResidencial||!form.funcionario_id)return;const selected=funcionarios.find(x=>x.id===form.funcionario_id);if(!selected)return;const request=selected.funcionario_id===selected.id?supabase.rpc("ro_obter_destino_residencial_resumido",{p_funcionario_id:selected.id}):supabase.rpc("ro_obter_destino_colaborador_resumido",{p_colaborador_id:selected.id});request.then(({data,error})=>{if(error){setErro("Não foi possível consultar o destino residencial.");return}const result=(Array.isArray(data)?data[0]:data) as {possui_endereco:boolean;cidade:string|null;uf:string|null};setDestinoResidencial(result);if(result?.possui_endereco)setForm(atual=>({...atual,destino:`${result.cidade} / ${result.uf}`}));else setForm(atual=>({...atual,destino:""}))})},[form.funcionario_id,form.motivo,motivoResidencial,funcionarios]);
-  const regra = regraPrazo(form.motivo || null, form.desligamento_subtipo || null);
+  const regra = regraPrazo(form.motivo || null, form.desligamento_subtipo || null, access.isRh);
   useEffect(() => {
     if (!draftReady || !restoredDraftRef.current) return;
     const parsed = parseDraft(localStorage.getItem(draftKey));
@@ -1173,7 +1173,7 @@ export function NovaSolicitacao({ userId, access }: { userId: string; access: Ac
   const idaMinima = calculo.data;
   const hojeLocal = calcularDataMinima(new Date(), "sem_prazo_minimo", 0).data;
   const podeExcepcionarPrazo = canExcepcionarPrazo(access.role);
-  const permiteExcecaoPrazo = motivoPermiteExcecaoPrazo(form.motivo || null, form.desligamento_subtipo || null);
+  const permiteExcecaoPrazo = motivoPermiteExcecaoPrazo(form.motivo || null, form.desligamento_subtipo || null, access.isRh);
   const operadorRoPodeCadastrarRetroativa = access.canOperateRO;
   const dataMinimaInput = operadorRoPodeCadastrarRetroativa ? "" : dataMinimaDoInput(idaMinima, hojeLocal, podeExcepcionarPrazo, permiteExcecaoPrazo && solicitarExcecao);
   const funcionarioSelecionado = funcionarios.find((x) => x.id === form.funcionario_id);
@@ -1218,6 +1218,8 @@ export function NovaSolicitacao({ userId, access }: { userId: string; access: Ac
     const f = funcionarios.find((x) => x.id === id);
     setForm({
       ...form,
+      viajante_modo: "cadastrado",
+      viajante_nome_informado: "",
       funcionario_id: id,
       obra_id: currentCostCenterPrefill(f),
       motivo: motivoAoSelecionarFuncionario(f, form.motivo),
@@ -1276,6 +1278,9 @@ export function NovaSolicitacao({ userId, access }: { userId: string; access: Ac
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     setErro("");
+    const viajanteManual = access.isRh && form.viajante_modo === "manual";
+    if (!viajanteManual && !form.funcionario_id) { setErro("Selecione o funcionário."); return; }
+    if (viajanteManual && form.viajante_nome_informado.trim().replace(/\s+/g, " ").length < 3) { setErro("Informe o nome completo do viajante."); return; }
     if (!form.obra_id) {
       setErro("Selecione o centro de custo atual.");
       return;
@@ -1321,7 +1326,7 @@ export function NovaSolicitacao({ userId, access }: { userId: string; access: Ac
       if(up.error){setErro("Não foi possível enviar o documento interno.");setBusy(false);return;}
       documentos.push({categoria,storage_path:uploadedPath,arquivo_nome:documento.name,tamanho_bytes:documento.size});
     }
-    const payload=normalizarCamposRetorno({...form,aprovador_id:dispensaAprovacao?"":form.aprovador_id,id,colaborador_id:funcionarioSelecionado?.funcionario_id===funcionarioSelecionado?.id?null:funcionarioSelecionado?.id,funcionario_id:funcionarioSelecionado?.funcionario_id||null,solicitar_excecao_prazo:!operadorRoPodeCadastrarRetroativa&&podeExcepcionarPrazo&&permiteExcecaoPrazo&&solicitarExcecao,usar_destino_excepcional:motivoResidencial&&destinoDiferente,destino_residencial_justificativa:justificativaDestino});
+    const payload=normalizarCamposRetorno({...form,aprovador_id:dispensaAprovacao?"":form.aprovador_id,id,colaborador_id:viajanteManual?null:funcionarioSelecionado?.funcionario_id===funcionarioSelecionado?.id?null:funcionarioSelecionado?.id,funcionario_id:viajanteManual?null:funcionarioSelecionado?.funcionario_id||null,viajante_nome_informado:viajanteManual?form.viajante_nome_informado:null,solicitar_excecao_prazo:!operadorRoPodeCadastrarRetroativa&&podeExcepcionarPrazo&&permiteExcecaoPrazo&&solicitarExcecao,usar_destino_excepcional:motivoResidencial&&destinoDiferente,destino_residencial_justificativa:justificativaDestino});
     const { data: created, error } = await supabase.rpc("ro_criar_solicitacao_com_aprovador", { p_solicitacao:payload, p_documentos:documentos });
     if (error) {
       if(uploadedPath) await supabase.storage.from("ro-documentos-internos").remove([uploadedPath]);
@@ -1354,7 +1359,8 @@ export function NovaSolicitacao({ userId, access }: { userId: string; access: Ac
           Solicitante
           <input value={solicitante} readOnly />
         </label>
-        <label>
+        {access.isRh && <fieldset className="wide"><legend>Viajante</legend><label className="checkbox"><input type="radio" name="viajante-modo" checked={form.viajante_modo==="cadastrado"} onChange={()=>setForm(alternarModoViajante(form,"cadastrado"))}/> Funcionário cadastrado</label><label className="checkbox"><input type="radio" name="viajante-modo" checked={form.viajante_modo==="manual"} onChange={()=>setForm(alternarModoViajante(form,"manual"))}/> Informar nome manualmente</label></fieldset>}
+        {access.isRh && form.viajante_modo === "manual" ? <label>Nome do viajante *<input required minLength={3} maxLength={150} value={form.viajante_nome_informado} onChange={(e)=>setForm({...form,viajante_nome_informado:e.target.value,funcionario_id:""})}/><small>Dados cadastrais ainda não disponíveis.</small></label> : <label>
           Funcionário *
           <select
             required
@@ -1368,7 +1374,7 @@ export function NovaSolicitacao({ userId, access }: { userId: string; access: Ac
               </option>
             ))}
           </select>
-        </label>
+        </label>}
         {!dispensaAprovacao && <label>Aprovador *<select required value={form.aprovador_id} onChange={(e)=>setForm({...form,aprovador_id:e.target.value})}><option value="">Selecione</option>{aprovadores.map((a)=><option key={a.id} value={a.id}>{a.label}</option>)}</select><small>Somente este aprovador poderá analisar a solicitação.</small></label>}
         <label>
           Centro de custo atual *
@@ -1441,7 +1447,7 @@ export function NovaSolicitacao({ userId, access }: { userId: string; access: Ac
           {form.necessita_hospedagem&&<><label>Check-in *<input type="date" required value={form.hospedagem_checkin} onChange={(e)=>setForm({...form,hospedagem_checkin:e.target.value})}/></label><label>Check-out *<input type="date" required min={form.hospedagem_checkin||undefined} value={form.hospedagem_checkout} onChange={(e)=>setForm({...form,hospedagem_checkout:e.target.value})}/></label></>}
           <label>Ida a partir do horário<input type="time" value={form.ida_a_partir_horario} onChange={(e)=>setForm({...form,ida_a_partir_horario:e.target.value})}/></label>
         </section>
-        {mensagemAntecedencia(form.motivo || null, form.desligamento_subtipo || null) && <div className="alert wide">{mensagemAntecedencia(form.motivo || null, form.desligamento_subtipo || null)}</div>}
+        {mensagemAntecedencia(form.motivo || null, form.desligamento_subtipo || null, access.isRh) && <div className="alert wide">{mensagemAntecedencia(form.motivo || null, form.desligamento_subtipo || null, access.isRh)}</div>}
         {form.motivo==="folga_campo"&&form.funcionario_id&&<section className="alert wide cycle-info">{cicloLoading?<span>Consultando ciclo...</span>:cicloFolga?.possui_historico?<><strong>Última folga de campo: {data(cicloFolga.ultima_folga_realizada)}</strong><span>Próxima folga prevista: {data(cicloFolga.proxima_folga_prevista)}</span><span>Data recomendada para solicitar: {data(cicloFolga.data_limite_recomendada)}</span></>:<span>{SEM_HISTORICO_FOLGA}</span>}{cicloFolga?.solicitacao_futura_existente_id&&<strong>Já existe uma solicitação de folga de campo para este funcionário em {data(cicloFolga.solicitacao_futura_data)}. Status: {estadoEfetivoFolga(cicloFolga)||statusLabel[cicloFolga.solicitacao_futura_status as Status]||cicloFolga.solicitacao_futura_status}.</strong>}</section>}
         <label>
           Data de ida *
@@ -1787,7 +1793,7 @@ export function Detalhe({ access, userId }: { access: Access; userId: string }) 
   }, [access.canViewAll, id]);
   useEffect(load, [load]);
   useEffect(()=>{if(!id || !(access.isRh||access.isRO||access.isAdmin))return;supabase.from("ro_passagem_documentos_internos").select("id,categoria,arquivo_nome,storage_path").eq("solicitacao_id",id).then(async({data})=>{const docs=await Promise.all((data||[]).map(async(d)=>{const signed=await supabase.storage.from("ro-documentos-internos").createSignedUrl(d.storage_path,300);return {...d,url:signed.data?.signedUrl};}));setDocumentosInternos(docs);});},[id,access.isRh,access.isRO,access.isAdmin]);
-  useEffect(()=>{if(!row||!(access.isRh||access.canImport))return;const request=row.colaborador_id?supabase.rpc("ro_obter_colaborador_detalhe",{p_colaborador_id:row.colaborador_id}):supabase.rpc("ro_obter_endereco_residencial_completo",{p_funcionario_id:row.funcionario_id});request.then(({data})=>setEnderecoResidencial((Array.isArray(data)?data[0]:data)||null))},[row,access.isRh,access.canImport]);
+  useEffect(()=>{if(!row||!(access.isRh||access.canImport))return;if(row.viajante_nome_informado)return;const request=row.colaborador_id?supabase.rpc("ro_obter_colaborador_detalhe",{p_colaborador_id:row.colaborador_id}):supabase.rpc("ro_obter_endereco_residencial_completo",{p_funcionario_id:row.funcionario_id});request.then(({data})=>setEnderecoResidencial((Array.isArray(data)?data[0]:data)||null))},[row,access.isRh,access.canImport]);
   useEffect(()=>{if(!row||!access.canOperateRO)return;supabase.rpc("ro_obter_dados_emissao_passagem",{p_solicitacao_id:row.id}).then(({data})=>setDadosEmissao((Array.isArray(data)?data[0]:data)||null))},[row,access.canOperateRO]);
   if (loading)
     return (
@@ -1890,7 +1896,7 @@ export function Detalhe({ access, userId }: { access: Access; userId: string }) 
           <DT t="Observações" v={row.observacoes_solicitante} />
         </dl>
       </section>
-      {access.canOperateRO&&dadosEmissao&&<section className="card detail"><h2>Dados para emissão da passagem</h2><dl><DT t="Nome" v={dadosEmissao.nome}/><DT t="Data de nascimento" v={data(dadosEmissao.data_nascimento)}/><DT t="CPF" v={formatCpf(dadosEmissao.cpf)}/><DT t="RG" v={dadosEmissao.rg}/><DT t="Telefone" v={formatPhone(dadosEmissao.telefone)}/></dl></section>}
+      {access.canOperateRO&&dadosEmissao&&<section className="card detail"><h2>Dados para emissão da passagem</h2>{row.viajante_nome_informado&&<div className="alert">Nome informado, dados cadastrais ainda não disponíveis.</div>}<dl><DT t="Nome" v={dadosEmissao.nome}/><DT t="Data de nascimento" v={data(dadosEmissao.data_nascimento)}/><DT t="CPF" v={formatCpf(dadosEmissao.cpf)}/><DT t="RG" v={dadosEmissao.rg}/><DT t="Telefone" v={formatPhone(dadosEmissao.telefone)}/></dl></section>}
       {(access.isRh||access.canImport)&&enderecoResidencial&&<section className="card detail"><h2>Dados cadastrais do passageiro</h2><dl><DT t="Nome" v={enderecoResidencial.nome||resolveSolicitacaoFuncionarioNome(row, funcionarioNomeExibicao)}/><DT t="Data de nascimento" v={data(enderecoResidencial.data_nascimento)}/><DT t="CPF" v={formatCpf(enderecoResidencial.cpf)}/><DT t="RG" v={enderecoResidencial.rg}/><DT t="Telefone" v={formatPhone(enderecoResidencial.telefone)}/><DT t="Logradouro" v={enderecoResidencial.logradouro}/><DT t="Bairro" v={enderecoResidencial.bairro}/><DT t="Cidade / UF" v={`${enderecoResidencial.cidade||"—"} / ${enderecoResidencial.uf||"—"}`}/><DT t="Atualizado em" v={dataHora(enderecoResidencial.atualizado_em)}/>{row.destino_residencial_origem==="excepcional"&&<DT t="Destino alterado manualmente" v={row.destino_residencial_justificativa}/>}</dl></section>}
       {(access.isRh||access.isRO||access.isAdmin)&&documentosInternos.length>0&&<section className="card"><h2>Documentos internos restritos</h2>{documentosInternos.map((d)=><div className="actions" key={d.id}><span>{d.categoria==="termo_justa_causa"?"Termo de justa causa":"Carta de pedido de demissão"}</span>{d.url&&<a className="btn secondary" href={d.url} target="_blank" rel="noreferrer">Abrir PDF</a>}</div>)}</section>}
       {!operacaoLiberada && (access.canOperateRO || access.isDenise) && <AcoesOperacionaisBloqueadas

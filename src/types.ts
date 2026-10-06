@@ -100,6 +100,7 @@ export type Anexo = {
 };
 export type Solicitacao = {
   id: string;
+  viajante_nome_informado?: string | null;
   funcionario_id: string | null;
   colaborador_id?: string | null;
   obra_id: string | null;

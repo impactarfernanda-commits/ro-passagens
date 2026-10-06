@@ -41,6 +41,7 @@ type CustoRelatorio = {
     houve_imprevisto: boolean | null;
     created_at: string;
     comprado_em: string | null;
+    viajante_nome_informado?: string | null;
     funcionario?: { id: string; nome: string };
     anexos?: Array<{ complementar: boolean; imprevisto: boolean }>;
   };
@@ -101,7 +102,7 @@ export function Relatorios() {
     let custosQuery = supabase
       .from("ro_passagem_custos")
       .select(
-        "solicitacao_id,centro_custo_id,tipo,descricao,valor,created_at,solicitacao:ro_passagem_solicitacoes!inner(id,obra_id,status,motivo,responsavel_ro_id,houve_imprevisto,excluida_em,created_at,comprado_em,funcionario:funcionarios(id,nome),anexos:ro_passagem_anexos(complementar,imprevisto))",
+        "solicitacao_id,centro_custo_id,tipo,descricao,valor,created_at,solicitacao:ro_passagem_solicitacoes!inner(id,obra_id,status,motivo,responsavel_ro_id,houve_imprevisto,excluida_em,created_at,comprado_em,viajante_nome_informado,funcionario:funcionarios(id,nome),anexos:ro_passagem_anexos(complementar,imprevisto))",
       )
       .is("solicitacao.excluida_em", null)
       .gt("valor", 0);
@@ -110,7 +111,7 @@ export function Relatorios() {
     let abertasQuery = supabase
       .from("ro_passagem_solicitacoes")
       .select(
-        "id,obra_id,status,motivo,responsavel_ro_id,houve_imprevisto,created_at,comprado_em,funcionario:funcionarios(id,nome),anexos:ro_passagem_anexos(complementar,imprevisto)",
+        "id,obra_id,status,motivo,responsavel_ro_id,houve_imprevisto,created_at,comprado_em,viajante_nome_informado,funcionario:funcionarios(id,nome),anexos:ro_passagem_anexos(complementar,imprevisto)",
       )
       .is("excluida_em", null)
       .in("status", ["solicitada", "em_analise", "em_andamento"]);
@@ -431,7 +432,7 @@ export function Relatorios() {
                 <thead><tr><th>Funcionário</th><th>Motivo</th><th>Status</th><th>Data da solicitação</th><th>Comprada em</th><th>Total</th><th>Ação</th></tr></thead>
                 <tbody>{detalhe.solicitacoes.map((item) => (
                   <tr key={item.solicitacao.id}>
-                    <td>{item.solicitacao.funcionario?.nome || "Não identificado"}</td>
+                    <td>{item.solicitacao.viajante_nome_informado || item.solicitacao.funcionario?.nome || "Não identificado"}</td>
                     <td>{item.solicitacao.motivo ? motivoLabel[item.solicitacao.motivo as keyof typeof motivoLabel] : "Não informado"}</td>
                     <td>{statusLabel[item.solicitacao.status as keyof typeof statusLabel] || item.solicitacao.status}</td>
                     <td>{dataHora(item.solicitacao.created_at)}</td>

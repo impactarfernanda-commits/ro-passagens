@@ -8,7 +8,7 @@ export type SolicitacaoColaboradorResolvido = {
   privadoIdOpcional: string | null;
 };
 
-type SolicitacaoPessoa = Pick<Solicitacao, "funcionario_id" | "colaborador_id" | "funcionario" | "colaborador">;
+type SolicitacaoPessoa = Pick<Solicitacao, "funcionario_id" | "colaborador_id" | "viajante_nome_informado" | "funcionario" | "colaborador">;
 
 export type NomeColaboradorSolicitacaoSeguro = {
   solicitacao_id: string;
@@ -53,6 +53,8 @@ export function resolveSolicitacaoFuncionarioNome(
   solicitacao: SolicitacaoPessoa,
   funcionarioNomeExibicao?: string | null,
 ) {
+  const nomeManual = solicitacao.viajante_nome_informado?.trim();
+  if (nomeManual && !solicitacao.funcionario_id && !solicitacao.colaborador_id) return nomeManual;
   const nomeSeguro = funcionarioNomeExibicao?.trim();
   if (solicitacao.colaborador_id && nomeSeguro) return nomeSeguro;
   return resolveSolicitacaoColaborador(solicitacao)?.nome || nomeSeguro || null;
