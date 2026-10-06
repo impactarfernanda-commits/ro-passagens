@@ -1,12 +1,25 @@
 # ro-email-notifications
 
-> Função mantida para uma etapa futura. O Portal não a chama automaticamente e
-> não precisa de secrets de e-mail para criar solicitações ou registrar compras.
+Worker interno da outbox `public.ro_email_outbox`, transportado pelo SMTP
+corporativo com Nodemailer. Nesta fase consome somente `aprovacao_pendente`;
+não aceita destinatário, assunto, HTML ou solicitação no payload. A invocação
+exige uma secret API key no header `apikey`.
 
-Secrets obrigatórias: `EMAIL_PROVIDER_API_KEY`, `EMAIL_FROM`, `EMAIL_FROM_NAME` e `APP_PUBLIC_URL`.
-As variáveis `SUPABASE_URL`, `SUPABASE_ANON_KEY` e `SUPABASE_SERVICE_ROLE_KEY` são fornecidas pelo ambiente Supabase.
+Secrets obrigatórias: `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`, `SMTP_USER`,
+`SMTP_PASSWORD`, `EMAIL_FROM_NAME` e `APP_PUBLIC_URL`.
+As variáveis `SUPABASE_URL` e `SUPABASE_SERVICE_ROLE_KEY` são fornecidas pelo ambiente Supabase.
 
-```powershell
-supabase secrets set EMAIL_PROVIDER_API_KEY="re_..." EMAIL_FROM="passagens@seudominio.com" EMAIL_FROM_NAME="RO Passagens" APP_PUBLIC_URL="https://seu-app.vercel.app"
-supabase functions deploy ro-email-notifications
-```
+`SMTP_USER` também é o endereço remetente. Nunca versione `SMTP_PASSWORD`.
+Porta 465 exige `SMTP_SECURE=true`; a validação TLS permanece ativa.
+
+O repositório não contém Supabase Cron/pg_cron/pg_net ou Vercel Cron já
+configurado. Após aplicar a migration e publicar a função, configure externamente
+uma chamada periódica `POST` autenticada pelo header `apikey` com uma das chaves
+de `SUPABASE_SECRET_KEYS`, sem payload de evento. Chaves publishable/anon e JWTs
+de usuário não autorizam o worker. Não versione a chave secreta nem a URL em SQL.
+
+SMTP não oferece uma chave de idempotência equivalente à API HTTP anterior.
+O worker usa um `Message-ID` determinístico por outbox, além da chave única do
+evento, claim/lease e retry controlado. Ainda existe uma janela residual: o
+servidor pode aceitar a mensagem e o processo falhar antes da confirmação no
+banco; nesse caso, um retry pode reenviar a entrega.

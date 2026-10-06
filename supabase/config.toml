@@ -3,3 +3,6 @@ verify_jwt = false
 
 [functions.obras-sso-exchange]
 verify_jwt = false
+
+[functions.ro-email-notifications]
+verify_jwt = false
