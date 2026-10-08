@@ -32,7 +32,7 @@ test("modo complementar inicia sem centro de custo selecionado", () => {
 test("validação de centro de custo ocorre antes do upload e da RPC", () => {
   const validation = page.indexOf("complementaryCostCenterValidationMessage(");
   const upload = page.indexOf('.from("ro-passagem-anexos")', validation);
-  const rpc = page.indexOf('supabase.rpc("ro_registrar_passagem_complementar"', validation);
+  const rpc = page.indexOf('supabase.rpc("ro_registrar_passagem_complementar_v2"', validation);
   assert.ok(validation >= 0 && upload > validation && rpc > upload);
   assert.equal(
     complementaryCostCenterValidationMessage("", [center("obra")]),
@@ -83,7 +83,7 @@ test("catálogo sem os marcadores explícitos de elegibilidade falha fechado", (
 });
 
 test("centro selecionado é enviado em anexos e custos complementares", () => {
-  assert.match(page, /anexosComplementares\.push\(\{\.\.\.metadata, centro_custo_id: form\.centro_custo_id\}\)/);
+  assert.match(page, /anexosComplementaresPorDocumento\.set\(pdf\.id,\{\.\.\.metadata,conteudo_sha256:pdf\.conteudo_sha256,client_ref:pdf\.id,centro_custo_id:form\.centro_custo_id\}\)/);
   assert.match(page, /buildPurchaseCosts\([\s\S]*?form\.centro_custo_id/);
 });
 

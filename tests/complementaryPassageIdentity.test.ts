@@ -1,0 +1,17 @@
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import test from "node:test";
+const migration=fs.readFileSync("supabase/migrations/202610080004_identidade_passagem_complementar.sql","utf8");
+const dryRun=fs.readFileSync("supabase/manual/DRY_RUN_202610080004_identidade_passagem_complementar.sql","utf8");
+const page=fs.readFileSync("src/pages.tsx","utf8");
+test("v2 persiste operação, grupos e vínculos",()=>{for(const x of ["ro_passagem_complementar_operacoes","ro_passagem_complementares","complemento_id","payload_fingerprint","idempotent_replay"])assert.match(migration,new RegExp(x));});
+test("v2 preserva autorização e estados",()=>{assert.match(migration,/ro_is_denise\(auth\.uid\(\)\)/);assert.match(migration,/passagem_comprada','finalizada/);});
+test("replay e colisões são explícitos",()=>{assert.match(migration,/OPERACAO_COMPLEMENTAR_ID_REUTILIZADA_COM_PAYLOAD_DIFERENTE/);assert.match(migration,/COMPLEMENTO_ID_JA_UTILIZADO/);});
+test("hash cruza browser, metadata, payload e banco",()=>{assert.match(page,/sha256BytesHex\(draft\.file\)/);assert.match(page,/metadata: \{ conteudo_sha256: pdf\.conteudo_sha256 \}/);assert.match(page,/conteudo_sha256:pdf\.conteudo_sha256/);assert.match(migration,/o\.user_metadata->>'conteudo_sha256'/);assert.match(migration,/v_storage_hash<>v_hash/);assert.match(migration,/complemento_id,conteudo_sha256/);});
+test("frontend envia grupos e IDs estáveis",()=>{assert.match(page,/complementaryAttempt/);assert.match(page,/complementIdByGroup/);assert.match(page,/ro_registrar_passagem_complementar_v2/);assert.match(page,/p_complementares: grupos\.map/);assert.match(page,/canonicalizeComplementaryDraft/);});
+test("timeout após iniciar RPC não remove upload potencialmente vinculado",()=>{assert.match(page,/if\(complementar\) complementaryRpcStarted=true/);assert.match(page,/storagePaths\.length&&\(!complementar\|\|!complementaryRpcStarted\)/);});
+test("complemento id é protegido",()=>{assert.match(migration,/COMPLEMENTO_ID_IMUTAVEL/);assert.match(migration,/COMPLEMENTO_ID_SOMENTE_PELA_RPC/);});
+test("frontend novo não usa RPC legada",()=>{assert.doesNotMatch(page,/supabase\.rpc\("ro_registrar_passagem_complementar",/);});
+test("migration não implementa email",()=>{assert.doesNotMatch(migration,/ro_email_outbox|passagem_complementar_registrada/);});
+test("dry run incorpora a migration e é transacional",()=>{const embedded=dryRun.match(/-- MIGRATION_202610080004_BEGIN\r?\n([\s\S]*?)-- MIGRATION_202610080004_END/)?.[1].trim();const source=migration.replace(/^begin;\s*/i,"").replace(/\s*commit;\s*$/i,"").trim();assert.equal(embedded,source);assert.match(dryRun,/^begin;/i);assert.match(dryRun,/rollback;\s*$/i);assert.doesNotMatch(dryRun,/\bcommit\s*;/i);});
+test("dry run é sintético e cobre a matriz operacional",()=>{for(const value of ["insert into auth.users","ro_denise_autorizados","ro_responsaveis","ro_alterar_status(sol,'em_andamento')","ro_registrar_compra_v2","op1_a_b","replay_zero_crescimento","conflito_somente_bytes","op2_c","reuso_a_rejeitado","ro_registrar_documentos_pos_compra","ro_finalizar_solicitacao","finalizada_aceita","user_metadata"])assert.match(dryRun,new RegExp(value.replace(/[.*+?^${}()|[\]\\]/g,"\\$&")));assert.doesNotMatch(dryRun,/d6081413-3730-41f0-981d-935a44303993/);});

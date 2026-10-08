@@ -69,6 +69,7 @@ import { creationRequestErrorMessage } from "./creationErrorMessages";
 import { dispensaAprovacaoDesligamentoUrgente } from "./approvalRules";
 import { canShowSolicitacaoDeletion, deletionErrorMessage, normalizeDeletionReason } from "./solicitacaoDeletion";
 import { complementaryCostCenters, complementaryCostCenterValidationMessage, complementaryPassageErrorMessage } from "./complementaryPassage";
+import { canonicalizeComplementaryDraft, complementaryGroupSignature, sha256BytesHex, sha256TextHex } from "./complementaryPassageIdentity";
 import { custosDePassagensComplementares } from "./dashboardImprevistos";
 import { additionalOperationalCostPayload, validateAdditionalOperationalCost } from "./additionalOperationalCost";
 import { visibleOperationalCostLabel, visibleOperationalCosts, visibleOperationalCostsTotal, type VisibleOperationalCost } from "./requesterOperationalCosts";
@@ -2569,6 +2570,7 @@ function OperationalCostRow({ custo, label, centroCustoLabel, canEdit, solicitac
 type PdfDraft = {
   id: string;
   file: File;
+  conteudo_sha256: string;
   partida_em: string;
   valor: string;
   observacao: string;
@@ -2599,6 +2601,12 @@ type PurchaseDraft = {
   pdfs: PdfDraft[];
   form: CompraForm;
   updatedAt: number;
+  complementaryAttempt?: {
+    fingerprint: string;
+    operationId: string;
+    complementIdByGroup: Record<string, string>;
+    storagePathByPdf: Record<string, string>;
+  };
 };
 const purchaseDraftBySolicitacaoId = new Map<string, PurchaseDraft>();
 const initialCompraForm = (row: Solicitacao): CompraForm => ({
@@ -2639,7 +2647,9 @@ function Compra({
   );
   const centrosComplementares = complementaryCostCenters(row, obras);
   useEffect(() => {
+    const current = purchaseDraftBySolicitacaoId.get(draftKey);
     purchaseDraftBySolicitacaoId.set(draftKey, {
+      ...current,
       pdfs,
       form,
       updatedAt: Date.now(),
@@ -2690,7 +2700,9 @@ function Compra({
     );
   };
   async function lerPdf(draft: PdfDraft) {
+    let conteudo_sha256 = "";
     try {
+      conteudo_sha256 = await sha256BytesHex(draft.file);
       const extracted = await extractTicketDataFromPdf(draft.file);
       const found = Boolean(extracted.partida_em || extracted.valor_passagem);
       const requiresManualValueConfirmation =
@@ -2698,6 +2710,7 @@ function Compra({
           extracted.tipo_documento || "documento",
         );
       updatePdf(draft.id, {
+        conteudo_sha256,
         partida_em: extracted.partida_em || "",
         valor: extracted.valor_passagem || "",
         passageiro: extracted.passageiro || "",
@@ -2730,6 +2743,7 @@ function Compra({
       });
     } catch {
       updatePdf(draft.id, {
+        conteudo_sha256,
         extracting: false,
         message: {
           kind: "warning",
@@ -2754,6 +2768,7 @@ function Compra({
       const draft: PdfDraft = {
         id: crypto.randomUUID(),
         file,
+        conteudo_sha256: "",
         partida_em: "",
         valor: "",
         observacao: "",
@@ -2851,10 +2866,30 @@ function Compra({
     setErro("");
     const storagePaths: string[] = [];
     const anexoIds: string[] = [];
-    const anexosComplementares: Record<string, unknown>[] = [];
+    const anexosComplementaresPorDocumento = new Map<string, Record<string, unknown>>();
+    let complementaryRpcStarted=false;
     try {
       const user = (await supabase.auth.getUser()).data.user;
       if (!user) throw new Error("Sessão expirada. Entre novamente.");
+      if(complementar&&pdfs.some((pdf)=>!/^[0-9a-f]{64}$/.test(pdf.conteudo_sha256)))
+        throw new Error("Aguarde a identificação segura do conteúdo dos PDFs.");
+      const custosAdicionais=buildPurchaseCosts(row.id,documentos,form,form.centro_custo_id).filter((custo)=>custo.tipo!=="passagem");
+      const complementaryFingerprint=await sha256TextHex(JSON.stringify(canonicalizeComplementaryDraft({
+        solicitacaoId:row.id,
+        groups:grupos.map((grupo)=>({documents:grupo.documents.map((item)=>{const pdf=pdfs.find((candidate)=>candidate.id===item.id)!;return{id:item.id,nome_arquivo:item.nome_arquivo,conteudo_sha256:pdf.conteudo_sha256,tamanho_bytes:pdf.file.size,partida_em:item.partida_em||"",valor:item.valor,observacao:pdf.observacao};})})),
+        centroCustoId:form.centro_custo_id,imprevisto:form.imprevisto,motivo:form.motivo_complementar,custosAdicionais,
+      })));
+      const storedDraft=purchaseDraftBySolicitacaoId.get(draftKey);
+      let complementaryAttempt=storedDraft?.complementaryAttempt;
+      if(complementar&&(!complementaryAttempt||complementaryAttempt.fingerprint!==complementaryFingerprint)){
+        complementaryAttempt={
+          fingerprint:complementaryFingerprint,
+          operationId:crypto.randomUUID(),
+          complementIdByGroup:Object.fromEntries(grupos.map((grupo)=>[complementaryGroupSignature(grupo.documents),crypto.randomUUID()])),
+          storagePathByPdf:{},
+        };
+        purchaseDraftBySolicitacaoId.set(draftKey,{...(storedDraft||{pdfs,form,updatedAt:Date.now()}),complementaryAttempt});
+      }
       const financeiroPorDocumento = new Map(
         grupos.flatMap((grupo) =>
           grupo.documents.map((documento) => [
@@ -2881,16 +2916,21 @@ function Compra({
           .normalize("NFD")
           .replace(/[\\u0300-\\u036f]/g, "")
           .replace(/[^a-zA-Z0-9._-]/g, "-");
-        const storagePath = row.id + (complementar ? "/complementares/" : "/") + crypto.randomUUID() + "-" + safeName;
-        storagePaths.push(storagePath);
+        const storagePath = complementar&&complementaryAttempt
+          ? complementaryAttempt.storagePathByPdf[pdf.id]||`${row.id}/complementares/${complementaryAttempt.operationId}/${pdf.id}-${safeName}`
+          : row.id+"/"+crypto.randomUUID()+"-"+safeName;
+        if(complementar&&complementaryAttempt) complementaryAttempt.storagePathByPdf[pdf.id]=storagePath;
         const upload = await supabase.storage
           .from("ro-passagem-anexos")
           .upload(storagePath, pdf.file, {
             contentType: "application/pdf",
             upsert: false,
+            ...(complementar ? { metadata: { conteudo_sha256: pdf.conteudo_sha256 } } : {}),
           });
-        if (upload.error)
+        const uploadJaExistia=Boolean(upload.error&&(String(upload.error.statusCode||"")==="409"||/already exists|duplicate/i.test(upload.error.message||"")));
+        if (upload.error&&!uploadJaExistia)
           throw new Error("Não foi possível enviar " + pdf.file.name + ".");
+        if(!upload.error) storagePaths.push(storagePath);
         const agrupamento = agrupamentoPorDocumento.get(pdf.id);
         const valorFinanceiro = financeiroPorDocumento.get(pdf.id) || 0;
         const notaAgrupamento = agrupamento
@@ -2909,7 +2949,7 @@ function Compra({
             .filter(Boolean)
             .join(" ") || null,
         };
-        if (complementar) anexosComplementares.push({...metadata, centro_custo_id: form.centro_custo_id});
+        if (complementar) anexosComplementaresPorDocumento.set(pdf.id,{...metadata,conteudo_sha256:pdf.conteudo_sha256,client_ref:pdf.id,centro_custo_id:form.centro_custo_id});
         else {
           const attachment = await supabase
             .from("ro_passagem_anexos")
@@ -2938,10 +2978,15 @@ function Compra({
       const primeiraPartida = primeiraPartidaLocal
         ? new Date(primeiraPartidaLocal).toISOString()
         : null;
+      if(complementar) complementaryRpcStarted=true;
       const { error } = complementar
-        ? await supabase.rpc("ro_registrar_passagem_complementar", {
+        ? await supabase.rpc("ro_registrar_passagem_complementar_v2", {
             p_solicitacao_id: row.id,
-            p_anexos: anexosComplementares,
+            p_operacao_id: complementaryAttempt?.operationId,
+            p_complementares: grupos.map((grupo)=>({
+              complemento_id:complementaryAttempt?.complementIdByGroup[complementaryGroupSignature(grupo.documents)],
+              anexos:grupo.documents.map((documento)=>anexosComplementaresPorDocumento.get(documento.id)),
+            })),
             p_imprevisto: form.imprevisto,
             p_motivo_complementar: form.motivo_complementar,
             p_custos_adicionais: custos.filter((custo)=>custo.tipo!=="passagem"),
@@ -2978,7 +3023,7 @@ function Compra({
     } catch (error) {
       if (anexoIds.length)
         await supabase.from("ro_passagem_anexos").delete().in("id", anexoIds);
-      if (storagePaths.length)
+      if (storagePaths.length&&(!complementar||!complementaryRpcStarted))
         await supabase.storage.from("ro-passagem-anexos").remove(storagePaths);
       setErro(
         error instanceof Error
