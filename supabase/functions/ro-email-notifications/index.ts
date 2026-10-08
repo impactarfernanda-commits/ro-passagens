@@ -1,10 +1,10 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.52.0";
 import nodemailer from "npm:nodemailer@7.0.10";
-import { approvalPendingHtml,approvalResultHtml,operationalRejectionHtml,resolveTravelerName,validEmail } from "../_shared/email-outbox.ts";
+import { approvalPendingHtml,approvalResultHtml,operationalRejectionHtml,purchasedPassageHtml,resolveTravelerName,validEmail } from "../_shared/email-outbox.ts";
 import { classifySmtpFailure,sanitizeSmtpError,sendSmtpMail,smtpConfigFromEnv,type MailTransport,type SmtpFailure } from "../_shared/smtp-email.ts";
 import { authorizeSecretRequest } from "../_shared/service-auth.ts";
 
-type OutboxEvent="aprovacao_pendente"|"solicitacao_aprovada"|"solicitacao_reprovada"|"solicitacao_recusada_ro";
+type OutboxEvent="aprovacao_pendente"|"solicitacao_aprovada"|"solicitacao_reprovada"|"solicitacao_recusada_ro"|"passagem_comprada";
 type OutboxRow={id:string;solicitacao_id:string;tipo_evento:OutboxEvent;destinatario_user_id:string;assunto:string;tentativas:number};
 const json=(body:unknown,status=200)=>new Response(JSON.stringify(body),{status,headers:{"content-type":"application/json"}});
 
@@ -30,16 +30,18 @@ Deno.serve(async(request)=>{
   const results:Array<{id:string;status:string}>=[];
   for(const item of(claimed||[])as OutboxRow[]){
     const finish=(status:string,email:string|null=null,providerId:string|null=null,error:string|null=null,next:string|null=null)=>admin.rpc("ro_finalizar_email_outbox",{p_id:item.id,p_worker_id:workerId,p_status:status,p_email:email,p_provider_message_id:providerId,p_ultimo_erro:error,p_proxima_tentativa_em:next});
-    if(!["aprovacao_pendente","solicitacao_aprovada","solicitacao_reprovada","solicitacao_recusada_ro"].includes(item.tipo_evento)){await finish("falha_permanente",null,null,"Tipo de evento não suportado");continue;}
-    const {data:sol}=await admin.from("ro_passagem_solicitacoes").select("id,status,recusada_em,recusada_por,solicitante_id,aprovador_id,aprovacao_status,excluida_em,funcionario_id,colaborador_id,viajante_nome_informado,motivo,origem,destino,data_ida,data_retorno").eq("id",item.solicitacao_id).maybeSingle();
+    if(!["aprovacao_pendente","solicitacao_aprovada","solicitacao_reprovada","solicitacao_recusada_ro","passagem_comprada"].includes(item.tipo_evento)){await finish("falha_permanente",null,null,"Tipo de evento não suportado");continue;}
+    const {data:sol}=await admin.from("ro_passagem_solicitacoes").select("id,status,recusada_em,recusada_por,comprado_em,comprado_por,solicitante_id,aprovador_id,aprovacao_status,excluida_em,funcionario_id,colaborador_id,viajante_nome_informado,motivo,origem,destino,data_ida,data_retorno,companhia,localizador").eq("id",item.solicitacao_id).maybeSingle();
     const pending=item.tipo_evento==="aprovacao_pendente";
     const operationalRejection=item.tipo_evento==="solicitacao_recusada_ro";
+    const purchased=item.tipo_evento==="passagem_comprada";
     const expectedStatus=item.tipo_evento==="solicitacao_aprovada"?"aprovada":item.tipo_evento==="solicitacao_reprovada"?"reprovada":"pendente";
     const expectedRecipient=pending?sol?.aprovador_id:sol?.solicitante_id;
     if(!sol||sol.excluida_em||expectedRecipient!==item.destinatario_user_id){await finish("cancelado",null,null,"Evento não corresponde mais ao estado da solicitação");results.push({id:item.id,status:"cancelado"});continue;}
     const operationalStateMismatch=operationalRejection&&!(sol.status==="recusada"&&Boolean(sol.recusada_em)&&Boolean(sol.recusada_por));
-    const approvalStateMismatch=!operationalRejection&&sol.aprovacao_status!==expectedStatus;
-    if(operationalStateMismatch||approvalStateMismatch){await finish("cancelado",null,null,"Evento não corresponde mais ao estado da solicitação");results.push({id:item.id,status:"cancelado"});continue;}
+    const purchaseStateMismatch=purchased&&(!["passagem_comprada","finalizada"].includes(sol.status)||!sol.comprado_em||!sol.comprado_por);
+    const approvalStateMismatch=!operationalRejection&&!purchased&&sol.aprovacao_status!==expectedStatus;
+    if(operationalStateMismatch||purchaseStateMismatch||approvalStateMismatch){await finish("cancelado",null,null,"Evento não corresponde mais ao estado da solicitação");results.push({id:item.id,status:"cancelado"});continue;}
     const userResult=await admin.auth.admin.getUserById(item.destinatario_user_id),recipient=userResult.data.user as typeof userResult.data.user&{banned_until?:string};
     if(!recipient||recipient.deleted_at||(recipient.banned_until&&new Date(recipient.banned_until)>new Date())||!validEmail(recipient.email)){await finish("falha_permanente",null,null,"Destinatário indisponível ou sem e-mail válido");results.push({id:item.id,status:"falha_permanente"});continue;}
     const email=recipient.email.trim().toLowerCase();
@@ -50,7 +52,9 @@ Deno.serve(async(request)=>{
       sol.colaborador_id?admin.from("ro_funcionarios_enderecos_privados").select("nome").eq("id",sol.colaborador_id).maybeSingle():Promise.resolve({data:null}),
     ]);
     const travelerName=resolveTravelerName(sol.viajante_nome_informado,privateTraveler?.nome,traveler?.nome),link=`${appUrl}/solicitacoes/${sol.id}`;
-    const html=operationalRejection
+    const html=purchased
+      ?purchasedPassageHtml({requesterName:recipientProfile?.full_name||recipient.user_metadata?.full_name||"Solicitante",traveler:travelerName,origin:sol.origem,destination:sol.destino,outboundDate:sol.data_ida,company:sol.companhia,locator:sol.localizador,link})
+      :operationalRejection
       ?operationalRejectionHtml({requesterName:recipientProfile?.full_name||recipient.user_metadata?.full_name||"Solicitante",traveler:travelerName,reason:sol.motivo,origin:sol.origem,destination:sol.destino,outboundDate:sol.data_ida,link})
       :pending
       ?approvalPendingHtml({approverName:recipientProfile?.full_name||recipient.user_metadata?.full_name||"Aprovador",traveler:travelerName,requester:requesterProfile?.full_name||null,origin:sol.origem,destination:sol.destino,outboundDate:sol.data_ida,returnDate:sol.data_retorno,link})

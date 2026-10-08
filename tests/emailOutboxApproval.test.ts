@@ -44,7 +44,7 @@ test("worker só consome outbox e não aceita campos de envio do cliente",()=>{
   assert.match(worker,/ro_claim_email_outbox/);assert.match(worker,/ro_finalizar_email_outbox/);
   assert.doesNotMatch(worker,/request\.json\(/);assert.doesNotMatch(worker,/access-control-allow-origin/i);
   assert.match(worker,/authorizeSecretRequest/);assert.doesNotMatch(worker,/Bearer \$\{serviceKey\}/i);
-  assert.match(worker,/aprovacao_status!=="pendente"/);assert.match(worker,/sol\.aprovador_id!==item\.destinatario_user_id/);
+  assert.match(worker,/sol\.aprovacao_status!==expectedStatus/);assert.match(worker,/expectedRecipient!==item\.destinatario_user_id/);
   assert.match(worker,/ro_passagem_solicitacoes/);
   assert.match(worker,/getUserById\(item\.destinatario_user_id\)/);
 });
@@ -97,7 +97,7 @@ test("worker autoriza somente secret API key antes de qualquer efeito",async()=>
 test("destinatário nunca é escolhido pela requisição",()=>{
   assert.doesNotMatch(worker,/request\.json\(/);
   assert.match(worker,/getUserById\(item\.destinatario_user_id\)/);
-  assert.match(worker,/sol\.aprovador_id!==item\.destinatario_user_id/);
+  assert.match(worker,/pending\?sol\?\.aprovador_id:sol\?\.solicitante_id/);
 });
 
 test("SMTP corporativo usa 465 seguro, remetente autenticado e timeouts",async()=>{
