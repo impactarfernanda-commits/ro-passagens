@@ -10,6 +10,7 @@ const pages=readFileSync(new URL("../src/pages.tsx",import.meta.url),"utf8");
 const report=readFileSync(new URL("../src/Relatorios.tsx",import.meta.url),"utf8");
 const email=readFileSync(new URL("../supabase/functions/ro-email-notifications/index.ts",import.meta.url),"utf8");
 const dryRun=readFileSync(new URL("../supabase/manual/DRY_RUN_202610060001_regras_especiais_rh.sql",import.meta.url),"utf8");
+const admissaoDeadlineMigration=readFileSync(new URL("../supabase/migrations/202610140002_corrige_prazo_admissao_rh.sql",import.meta.url),"utf8");
 
 test("dry run RH é autocontido e contém exatamente a migration",()=>{
   const normalize=(value:string)=>value.replace(/\r\n/g,"\n").trim();
@@ -60,7 +61,7 @@ test("matriz RH usa quatro motivos sem ampliar usuário comum",()=>{
 });
 
 for(const [motivo,subtipo,dias,texto] of [
-  ["admissao",null,7,"Antecedência mínima: 7 dias corridos."],
+  ["admissao",null,4,"Admissão exige no mínimo 4 dias úteis de antecedência, sem contar o dia da viagem."],
   ["inicio_obra",null,4,"Antecedência mínima: 4 dias corridos."],
   ["desligamento","programado_outros",5,"Antecedência mínima: 5 dias corridos."],
   ["viagem_administrativa",null,0,"Sem antecedência mínima."],
@@ -70,9 +71,9 @@ for(const [motivo,subtipo,dias,texto] of [
   assert.equal(mensagemAntecedencia(motivo,subtipo,true),texto);
 });
 
-test("limites exatos de RH aceitam e véspera rejeita",()=>{
+test("limites exatos das regras RH inalteradas aceitam e véspera rejeita",()=>{
   const agora=new Date("2026-10-06T10:00:00-03:00");
-  for(const [motivo,subtipo,dias] of [["admissao",null,7],["inicio_obra",null,4],["desligamento","programado_outros",5]] as const){
+  for(const [motivo,subtipo,dias] of [["inicio_obra",null,4],["desligamento","programado_outros",5]] as const){
     const regra=regraPrazo(motivo,subtipo,true);
     assert.equal(regra.quantidade,dias);
     const minimo=calcularDataMinima(agora,regra.tipo,regra.quantidade).data;
@@ -81,6 +82,26 @@ test("limites exatos de RH aceitam e véspera rejeita",()=>{
     assert.equal(validarSolicitacao(base).bloqueios.includes("FORA_DO_PRAZO"),false);
     assert.equal(validarSolicitacao({...base,dataIda:anterior.toISOString().slice(0,10)}).bloqueios.includes("FORA_DO_PRAZO"),true);
   }
+});
+
+test("admissão em 20/10 exige pedido até 14/10, sem contar o dia da viagem",()=>{
+  const base={motivo:"admissao" as const,desligamentoSubtipo:null,role:"assistente",isRh:true,dataIda:"2026-10-20",documentos:[],anos:[{ano:2026,completo:true}]};
+  for(const [pedido,bloqueado] of [["2026-10-13",false],["2026-10-14",false],["2026-10-15",true],["2026-10-16",true]] as const){
+    const resultado=validarSolicitacao({...base,agora:new Date(`${pedido}T10:00:00-03:00`)});
+    assert.equal(resultado.bloqueios.includes("FORA_DO_PRAZO"),bloqueado,`${pedido} -> ${resultado.dataMinimaPermitida}`);
+  }
+  assert.equal(validarSolicitacao({...base,agora:new Date("2026-10-14T23:59:00-03:00")}).bloqueios.includes("FORA_DO_PRAZO"),false);
+});
+
+test("admissão ignora fins de semana na antecedência",()=>{
+  const resultado=validarSolicitacao({motivo:"admissao",desligamentoSubtipo:null,role:"assistente",isRh:true,agora:new Date("2026-10-14T10:00:00-03:00"),dataIda:"2026-10-20",documentos:[],anos:[{ano:2026,completo:true}]});
+  assert.equal(resultado.dataMinimaPermitida,"2026-10-20");
+});
+
+test("feriado no intervalo recua o prazo de admissão em um dia útil",()=>{
+  const base={motivo:"admissao" as const,desligamentoSubtipo:null,role:"assistente",isRh:true,dataIda:"2026-10-20",documentos:[],diasNaoUteis:[{data:"2026-10-16",ativo:true}],anos:[{ano:2026,completo:true}]};
+  assert.equal(validarSolicitacao({...base,agora:new Date("2026-10-13T10:00:00-03:00")}).bloqueios.includes("FORA_DO_PRAZO"),false);
+  assert.equal(validarSolicitacao({...base,agora:new Date("2026-10-14T10:00:00-03:00")}).bloqueios.includes("FORA_DO_PRAZO"),true);
 });
 
 test("modo manual limpa identidade e volta ao cadastrado limpando nome",()=>{
@@ -110,6 +131,15 @@ test("migration protege identidade, prazo e CC no backend",()=>{
   assert.match(migration,/ro_catalogo_centros_custo[\s\S]*ro_is_rh_active/);
   assert.doesNotMatch(migration,/create or replace function public\.ro_can_view_all/);
   assert.match(migration,/aprovacao_status not in\('aprovada','dispensada'\)/);
+});
+
+test("correção backend altera somente admissão e reutiliza o calendário canônico",()=>{
+  assert.match(admissaoDeadlineMigration,/p_motivo='admissao'[\s\S]*'dias_uteis'::text,4/);
+  assert.match(admissaoDeadlineMigration,/v_reg\.regra_codigo='rh_admissao'[\s\S]*public\.ro_data_minima_util\(\(v_hoje\+time '12:00'\) at time zone 'America\/Sao_Paulo',v_reg\.prazo_quantidade\)\+1/);
+  assert.match(admissaoDeadlineMigration,/else v_min:=public\.ro_data_minima_util\(now\(\),v_reg\.prazo_quantidade\)/);
+  assert.match(admissaoDeadlineMigration,/p_motivo='inicio_obra'[\s\S]*'dias_corridos'::text,4/);
+  assert.match(admissaoDeadlineMigration,/rh_desligamento_programado_outros'[\s\S]*'dias_corridos'::text,5/);
+  assert.match(admissaoDeadlineMigration,/rh_viagem_administrativa'[\s\S]*'sem_prazo_minimo'::text,0/);
 });
 
 test("consumidores mostram nome manual e dados de emissão nulos",()=>{

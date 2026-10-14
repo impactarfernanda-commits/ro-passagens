@@ -28,7 +28,7 @@ export function getPrimeiroEmbarque(datas: Array<string | null | undefined>) {
 }
 export function regraPrazo(motivo: Motivo | null, subtipo?: DesligamentoSubtipo | null, isRh = false) {
   if (isRh) {
-    if (motivo === "admissao") return { codigo: "rh_admissao", tipo: "dias_corridos" as const, quantidade: 7 };
+    if (motivo === "admissao") return { codigo: "rh_admissao", tipo: "dias_uteis" as const, quantidade: 4 };
     if (motivo === "inicio_obra") return { codigo: "rh_inicio_obra", tipo: "dias_corridos" as const, quantidade: 4 };
     if (motivo === "desligamento" && subtipo === "programado_outros") return { codigo: "rh_desligamento_programado_outros", tipo: "dias_corridos" as const, quantidade: 5 };
     if (motivo === "viagem_administrativa") return { codigo: "rh_viagem_administrativa", tipo: "sem_prazo_minimo" as const, quantidade: 0 };
@@ -76,6 +76,11 @@ export function calcularDataMinima(agora: Date, tipo: PrazoTipo, quantidade: num
   }
   return { data: isoDate(cursor), anosPendentes: [...usados].filter((ano) => !completos.has(ano)).sort() };
 }
+function calcularDataMinimaRegra(agora: Date, regra: ReturnType<typeof regraPrazo>, diasNaoUteis: DiaNaoUtil[] = [], anos: CalendarioAno[] = []) {
+  if (regra.codigo !== "rh_admissao") return calcularDataMinima(agora, regra.tipo, regra.quantidade, diasNaoUteis, anos);
+  const calculo = calcularDataMinima(calendarDate(agora), regra.tipo, regra.quantidade, diasNaoUteis, anos);
+  return { ...calculo, data: isoDate(addDays(new Date(`${calculo.data}T12:00:00Z`), 1)) };
+}
 export function categoriaDocumento(subtipo?: DesligamentoSubtipo | null) {
   if (subtipo === "justa_causa") return "termo_justa_causa" as const;
   if (subtipo === "pedido_demissao") return "carta_pedido_demissao" as const;
@@ -86,6 +91,7 @@ export function mensagemAntecedencia(motivo: Motivo | null, subtipo?: Desligamen
   if (!motivo || (motivo === "desligamento" && !subtipo)) return null;
   const regra = regraPrazo(motivo, subtipo, isRh);
   if (regra.tipo === "sem_prazo_minimo") return "Sem antecedência mínima.";
+  if (regra.codigo === "rh_admissao") return "Admissão exige no mínimo 4 dias úteis de antecedência, sem contar o dia da viagem.";
   return `Antecedência mínima: ${regra.quantidade} ${regra.tipo === "dias_uteis" ? "dias úteis" : "dias corridos"}.`;
 }
 
@@ -114,7 +120,7 @@ export function validarSolicitacao(input: ValidacaoInput) {
   const hoje=calcularDataMinima(input.agora,"sem_prazo_minimo",0).data;
   const dataIda=input.dataIda||"";
   if(!/^\d{4}-\d{2}-\d{2}$/.test(dataIda))bloqueios.push("DATA_IDA_OBRIGATORIA"); else if(dataIda<hoje)bloqueios.push("DATA_IDA_NO_PASSADO");
-  const regra=regraPrazo(input.motivo,input.desligamentoSubtipo,input.isRh); const calculo=calcularDataMinima(input.agora,regra.tipo,regra.quantidade,input.diasNaoUteis,input.anos);
+  const regra=regraPrazo(input.motivo,input.desligamentoSubtipo,input.isRh); const calculo=calcularDataMinimaRegra(input.agora,regra,input.diasNaoUteis,input.anos);
   if(calculo.anosPendentes.length)bloqueios.push(`CALENDARIO_INCOMPLETO:${calculo.anosPendentes[0]}`);
   const foraDoPrazo=Boolean(dataIda&&dataIda<calculo.data);
   if(foraDoPrazo&&!podeExcepcionar)bloqueios.push("FORA_DO_PRAZO");
