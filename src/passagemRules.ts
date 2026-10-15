@@ -78,8 +78,7 @@ export function calcularDataMinima(agora: Date, tipo: PrazoTipo, quantidade: num
 }
 function calcularDataMinimaRegra(agora: Date, regra: ReturnType<typeof regraPrazo>, diasNaoUteis: DiaNaoUtil[] = [], anos: CalendarioAno[] = []) {
   if (regra.codigo !== "rh_admissao") return calcularDataMinima(agora, regra.tipo, regra.quantidade, diasNaoUteis, anos);
-  const calculo = calcularDataMinima(calendarDate(agora), regra.tipo, regra.quantidade, diasNaoUteis, anos);
-  return { ...calculo, data: isoDate(addDays(new Date(`${calculo.data}T12:00:00Z`), 1)) };
+  return calcularDataMinima(calendarDate(agora), regra.tipo, regra.quantidade, diasNaoUteis, anos);
 }
 export function categoriaDocumento(subtipo?: DesligamentoSubtipo | null) {
   if (subtipo === "justa_causa") return "termo_justa_causa" as const;
@@ -91,7 +90,7 @@ export function mensagemAntecedencia(motivo: Motivo | null, subtipo?: Desligamen
   if (!motivo || (motivo === "desligamento" && !subtipo)) return null;
   const regra = regraPrazo(motivo, subtipo, isRh);
   if (regra.tipo === "sem_prazo_minimo") return "Sem antecedência mínima.";
-  if (regra.codigo === "rh_admissao") return "Admissão exige no mínimo 4 dias úteis de antecedência, sem contar o dia da viagem.";
+  if (regra.codigo === "rh_admissao") return "Admissão exige no mínimo 4 dias úteis de antecedência, contando o dia da viagem.";
   return `Antecedência mínima: ${regra.quantidade} ${regra.tipo === "dias_uteis" ? "dias úteis" : "dias corridos"}.`;
 }
 

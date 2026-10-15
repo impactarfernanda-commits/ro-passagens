@@ -61,7 +61,7 @@ test("matriz RH usa quatro motivos sem ampliar usuário comum",()=>{
 });
 
 for(const [motivo,subtipo,dias,texto] of [
-  ["admissao",null,4,"Admissão exige no mínimo 4 dias úteis de antecedência, sem contar o dia da viagem."],
+  ["admissao",null,4,"Admissão exige no mínimo 4 dias úteis de antecedência, contando o dia da viagem."],
   ["inicio_obra",null,4,"Antecedência mínima: 4 dias corridos."],
   ["desligamento","programado_outros",5,"Antecedência mínima: 5 dias corridos."],
   ["viagem_administrativa",null,0,"Sem antecedência mínima."],
@@ -84,24 +84,24 @@ test("limites exatos das regras RH inalteradas aceitam e véspera rejeita",()=>{
   }
 });
 
-test("admissão em 20/10 exige pedido até 14/10, sem contar o dia da viagem",()=>{
+test("admissão em 20/10 exige pedido até 15/10, contando o dia da viagem",()=>{
   const base={motivo:"admissao" as const,desligamentoSubtipo:null,role:"assistente",isRh:true,dataIda:"2026-10-20",documentos:[],anos:[{ano:2026,completo:true}]};
-  for(const [pedido,bloqueado] of [["2026-10-13",false],["2026-10-14",false],["2026-10-15",true],["2026-10-16",true]] as const){
+  for(const [pedido,bloqueado] of [["2026-10-14",false],["2026-10-15",false],["2026-10-16",true],["2026-10-19",true]] as const){
     const resultado=validarSolicitacao({...base,agora:new Date(`${pedido}T10:00:00-03:00`)});
     assert.equal(resultado.bloqueios.includes("FORA_DO_PRAZO"),bloqueado,`${pedido} -> ${resultado.dataMinimaPermitida}`);
   }
-  assert.equal(validarSolicitacao({...base,agora:new Date("2026-10-14T23:59:00-03:00")}).bloqueios.includes("FORA_DO_PRAZO"),false);
+  assert.equal(validarSolicitacao({...base,agora:new Date("2026-10-15T23:59:00-03:00")}).bloqueios.includes("FORA_DO_PRAZO"),false);
 });
 
 test("admissão ignora fins de semana na antecedência",()=>{
   const resultado=validarSolicitacao({motivo:"admissao",desligamentoSubtipo:null,role:"assistente",isRh:true,agora:new Date("2026-10-14T10:00:00-03:00"),dataIda:"2026-10-20",documentos:[],anos:[{ano:2026,completo:true}]});
-  assert.equal(resultado.dataMinimaPermitida,"2026-10-20");
+  assert.equal(resultado.dataMinimaPermitida,"2026-10-19");
 });
 
 test("feriado no intervalo recua o prazo de admissão em um dia útil",()=>{
   const base={motivo:"admissao" as const,desligamentoSubtipo:null,role:"assistente",isRh:true,dataIda:"2026-10-20",documentos:[],diasNaoUteis:[{data:"2026-10-16",ativo:true}],anos:[{ano:2026,completo:true}]};
-  assert.equal(validarSolicitacao({...base,agora:new Date("2026-10-13T10:00:00-03:00")}).bloqueios.includes("FORA_DO_PRAZO"),false);
-  assert.equal(validarSolicitacao({...base,agora:new Date("2026-10-14T10:00:00-03:00")}).bloqueios.includes("FORA_DO_PRAZO"),true);
+  assert.equal(validarSolicitacao({...base,agora:new Date("2026-10-14T10:00:00-03:00")}).bloqueios.includes("FORA_DO_PRAZO"),false);
+  assert.equal(validarSolicitacao({...base,agora:new Date("2026-10-15T10:00:00-03:00")}).bloqueios.includes("FORA_DO_PRAZO"),true);
 });
 
 test("modo manual limpa identidade e volta ao cadastrado limpando nome",()=>{
