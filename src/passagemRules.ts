@@ -55,19 +55,19 @@ export function motivoAoSelecionarFuncionario(funcionario: { funcionario_id?: st
 export function motivoPermiteExcecaoPrazo(motivo: Motivo | null, subtipo?: DesligamentoSubtipo | null, isRh = false) {
   return regraPrazo(motivo, subtipo, isRh).tipo !== "sem_prazo_minimo";
 }
-const zonedParts = (d: Date) => Object.fromEntries(new Intl.DateTimeFormat("en-CA", { timeZone: "America/Sao_Paulo", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).formatToParts(d).map((p) => [p.type, p.value]));
+const zonedParts = (d: Date) => Object.fromEntries(new Intl.DateTimeFormat("en-CA", { timeZone: "America/Sao_Paulo", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23" }).formatToParts(d).map((p) => [p.type, p.value]));
 const calendarDate = (d: Date) => { const p=zonedParts(d); return new Date(Date.UTC(Number(p.year),Number(p.month)-1,Number(p.day),12)); };
 const isoDate = (d: Date) => `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-${String(d.getUTCDate()).padStart(2, "0")}`;
 const addDays = (d: Date, n: number) => new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() + n, 12));
 export function calcularDataMinima(agora: Date, tipo: PrazoTipo, quantidade: number, diasNaoUteis: DiaNaoUtil[] = [], anos: CalendarioAno[] = []) {
-  const local=calendarDate(agora); const partes=zonedParts(agora); const hora=Number(partes.hour); const minuto=Number(partes.minute);
+  const local=calendarDate(agora); const partes=zonedParts(agora); const hora=Number(partes.hour); const minuto=Number(partes.minute); const segundo=Number(partes.second);
   if (tipo === "sem_prazo_minimo") return { data: isoDate(local), anosPendentes: [] as number[] };
   if (tipo === "dias_corridos") return { data: isoDate(addDays(local, quantidade)), anosPendentes: [] as number[] };
   const bloqueados = new Set(diasNaoUteis.filter((d) => d.ativo).map((d) => d.data));
   const completos = new Set(anos.filter((a) => a.completo).map((a) => a.ano));
   const usados = new Set<number>(); let cursor = local; let restantes = quantidade; let primeiroDia = true;
   const limite = cursor.getUTCDay() === 5 ? [15, 30] : [16, 30];
-  const passouCorte = hora > limite[0] || (hora === limite[0] && minuto > limite[1]);
+  const passouCorte = hora > limite[0] || (hora === limite[0] && (minuto > limite[1] || (minuto === limite[1] && segundo > 0)));
   while (restantes > 0) {
     const util = cursor.getUTCDay() !== 0 && cursor.getUTCDay() !== 6 && !bloqueados.has(isoDate(cursor));
     if (util && !(primeiroDia && passouCorte)) { usados.add(cursor.getUTCFullYear()); restantes--; if (!restantes) break; }
