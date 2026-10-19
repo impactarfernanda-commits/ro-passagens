@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import fs from "node:fs";
-import { buildPostPurchasePayload, canonicalizePostPurchasePayload, deterministicPostPurchaseStoragePath, isExistingDeterministicUpload, postPurchaseCostCenters, postPurchaseErrorMessage, registerPostPurchaseOperation, sha256Hex, shouldCleanupPostPurchaseUploads } from "../src/postPurchasePassage.ts";
+import { buildPostPurchasePayload, canonicalizePostPurchasePayload, deterministicPostPurchaseStoragePath, isExistingDeterministicUpload, postPurchaseCostCenters, postPurchaseErrorMessage, postPurchaseReviewGroups, registerPostPurchaseOperation, sha256Hex, shouldCleanupPostPurchaseUploads, type PostPurchaseDecision } from "../src/postPurchasePassage.ts";
 import { isValidFinancialPassageIdentity } from "../src/passagemGrouping.ts";
 import { buildPurchaseCosts } from "../src/purchaseCosts.ts";
 import type { Custo } from "../src/types.ts";
@@ -21,6 +21,59 @@ test("documento de apoio não cria grupo financeiro", () => {
   const payload = buildPostPurchasePayload([document()], { "LOC:ABC123": { financial: false, value: 100, manual: false, justification: "" } }, []);
   assert.equal(payload.groups.length, 0);
   assert.equal(payload.attachments.length, 1);
+});
+
+test("grupo exclusivamente histórico não exige decisão nem entra no payload de apoio", () => {
+  const historical = document({
+    ref: "existing:a", localizador: "HIST01", existingAttachmentId: "a",
+    storagePath: "request/a.pdf", historicalOnly: true, sourceExisting: true,
+  });
+  const current = document({ ref: "new:b", localizador: "NOVO02", valor: 72.48, sha256: "b".repeat(64) });
+  const reviewGroups = postPurchaseReviewGroups([historical, current]);
+  const decisions: Record<string, PostPurchaseDecision> = {
+    "LOC:NOVO02": { action: "support", value: 72.48, manual: false, justification: "" },
+  };
+  const missingAction = reviewGroups.some((group) => !decisions[group.key]?.action);
+  const missingCostCenter = reviewGroups.some((group) => decisions[group.key]?.action === "new" && !decisions[group.key]?.centro_custo_id);
+  const missingExistingCost = reviewGroups.some((group) => decisions[group.key]?.action === "link" && !decisions[group.key]?.existingCostId);
+  const payload = buildPostPurchasePayload([historical, current], decisions, [cost("same-value", 72.48)]);
+
+  assert.deepEqual(reviewGroups.map((group) => group.key), ["LOC:NOVO02"]);
+  assert.equal(missingAction, false);
+  assert.equal(missingCostCenter, false);
+  assert.equal(missingExistingCost, false);
+  assert.deepEqual(payload.groups, []);
+  assert.deepEqual(payload.attachments.map((attachment) => attachment.client_ref), ["new:b"]);
+});
+
+test("histórico isolado não bloqueia nova passagem e sua regra financeira permanece", () => {
+  const historical = document({ ref: "existing:a", localizador: "HIST01", historicalOnly: true, existingAttachmentId: "a" });
+  const current = document({ ref: "new:b", localizador: "NOVO02", sha256: "b".repeat(64) });
+  const payload = buildPostPurchasePayload([historical, current], {
+    "LOC:NOVO02": { action: "new", value: 100, manual: false, justification: "", centro_custo_id: cc },
+  }, []);
+  assert.equal(payload.groups.length, 1);
+  assert.deepEqual(payload.groups[0].anexo_refs, ["new:b"]);
+  assert.deepEqual(payload.attachments.map((attachment) => attachment.client_ref), ["new:b"]);
+});
+
+test("histórico agrupado com documento novo continua revisável", () => {
+  const historical = document({ ref: "existing:a", historicalOnly: true, existingAttachmentId: "a" });
+  const current = document({ ref: "new:b", tipo_documento: "bilhete_embarque", sha256: "b".repeat(64) });
+  assert.deepEqual(postPurchaseReviewGroups([historical, current]).map((group) => group.key), ["LOC:ABC123"]);
+  const payload = buildPostPurchasePayload([historical, current], {
+    "LOC:ABC123": { action: "support", value: 100, manual: false, justification: "" },
+  }, []);
+  assert.deepEqual(payload.attachments.map((attachment) => attachment.client_ref), ["new:b"]);
+  assert.deepEqual(payload.groups, []);
+});
+
+test("apoio com valor igual a custo existente é permitido sem criar custo", () => {
+  const payload = buildPostPurchasePayload([document({ valor: 72.48 })], {
+    "LOC:ABC123": { action: "support", value: 72.48, manual: false, justification: "" },
+  }, [cost("same-value", 72.48)]);
+  assert.equal(payload.attachments.length, 1);
+  assert.deepEqual(payload.groups, []);
 });
 
 test("valor automático cria no máximo um custo por grupo voucher + bilhete", () => {
@@ -85,7 +138,7 @@ test("guarda de banco bloqueia compra_chave existente, preserva vínculo e repla
 });
 
 test("anexo existente é enviado por id sem exigir reupload", () => {
-  const existing = document({ ref: "existing:a", existingAttachmentId: "a", storagePath: "request/a.pdf", historicalOnly: true, sourceExisting: true });
+  const existing = document({ ref: "existing:a", existingAttachmentId: "a", storagePath: "request/a.pdf", historicalOnly: false, sourceExisting: true });
   const payload = buildPostPurchasePayload([existing], { "LOC:ABC123": { financial: true, value: 100, manual: true, justification: "Associação conferida manualmente", existingCostId: "legacy" } }, [cost("legacy", 100)]);
   assert.equal(payload.attachments[0].id, "a");
   assert.equal("storage_path" in payload.attachments[0], false);

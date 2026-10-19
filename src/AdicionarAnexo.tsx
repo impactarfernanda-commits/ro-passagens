@@ -2,7 +2,7 @@ import { useMemo, useRef, useState } from "react";
 import { supabase } from "./supabase";
 import { validatePdfFile } from "./pdfFileValidation";
 import { extractTicketDataFromPdf } from "./pdfPassagem";
-import { buildPostPurchasePayload, canonicalizePostPurchasePayload, POST_PURCHASE_COST_CENTER_REQUIRED, postPurchaseCostCenters, postPurchaseErrorMessage, postPurchaseGroups, registerPostPurchaseOperation, sha256Hex, type PostPurchaseDecision, type PostPurchaseDocument } from "./postPurchasePassage";
+import { buildPostPurchasePayload, canonicalizePostPurchasePayload, POST_PURCHASE_COST_CENTER_REQUIRED, postPurchaseCostCenters, postPurchaseErrorMessage, postPurchaseReviewGroups, registerPostPurchaseOperation, sha256Hex, type PostPurchaseDecision, type PostPurchaseDocument } from "./postPurchasePassage";
 import { isValidFinancialPassageIdentity } from "./passagemGrouping";
 import type { Anexo, Custo, Obra, Solicitacao } from "./types";
 
@@ -19,7 +19,7 @@ export function AdicionarAnexo({ solicitacaoId, solicitacao, obras, anexos, cust
   const [documents, setDocuments] = useState<PostPurchaseDocument[]>([]);
   const [decisions, setDecisions] = useState<Record<string, PostPurchaseDecision>>({});
   const [message, setMessage] = useState("");
-  const groups = useMemo(() => postPurchaseGroups(documents), [documents]);
+  const groups = useMemo(() => postPurchaseReviewGroups(documents), [documents]);
   const eligibleCostCenters = useMemo(() => postPurchaseCostCenters(solicitacao, obras), [solicitacao, obras]);
   const missingCostCenter = groups.some((group) => {
     const decision = decisions[group.key];
@@ -29,7 +29,7 @@ export function AdicionarAnexo({ solicitacaoId, solicitacao, obras, anexos, cust
   const missingExistingCost = groups.some((group) => decisions[group.key]?.action === "link" && !decisions[group.key]?.existingCostId);
 
   function initializeDecisions(next: PostPurchaseDocument[]) {
-    setDecisions((current) => Object.fromEntries(postPurchaseGroups(next).map((group) => {
+    setDecisions((current) => Object.fromEntries(postPurchaseReviewGroups(next).map((group) => {
       return [group.key, current[group.key] || {
         value: group.value,
         manual: group.needsReview, justification: "",
@@ -139,7 +139,7 @@ export function AdicionarAnexo({ solicitacaoId, solicitacao, obras, anexos, cust
     {message && <p role="status" aria-live="polite">{message}</p>}
     {open && <section className="card post-purchase-review">
       <h3>Revisar documentos pós-compra</h3>
-      {groups.filter((group) => group.documents.some((document) => !document.historicalOnly)).map((group) => {
+      {groups.map((group) => {
         const decision = decisions[group.key];
         const validFinancialIdentity = isValidFinancialPassageIdentity(group.key);
         const passageCosts = custos.filter((cost) => cost.tipo === "passagem");
@@ -159,7 +159,7 @@ export function AdicionarAnexo({ solicitacaoId, solicitacao, obras, anexos, cust
           <label><input type="radio" name={`kind-${group.key}`} checked={decision?.action === "support"}
             onChange={() => changeDecision(group.key, { action: "support", existingCostId: undefined, centro_custo_id: undefined })} /> Documento de apoio / sem custo</label>
           {sameKey && <small role="alert">Já existe uma passagem com esta compra_chave. Vincule os anexos ao custo existente.</small>}
-          {!sameKey && sameValue.length > 0 && <small role="alert">Possível duplicidade: há {sameValue.length} custo(s) de passagem com o mesmo valor. Confira os demais sinais antes de decidir.</small>}
+          {!sameKey && sameValue.length > 0 && <small role="alert">Já existe uma passagem com este mesmo valor. Se este PDF for apenas um bilhete ou documento complementar da passagem já comprada, vincule-o à passagem existente ou salve como documento de apoio sem custo.</small>}
           {decision?.action === "link" && <>
             <label>Passagem existente *<select required value={decision.existingCostId || ""}
               onChange={(event) => { const selected = custos.find((cost) => cost.id === event.target.value); changeDecision(group.key, { existingCostId: event.target.value || undefined, value: Number(selected?.valor || group.value), manual: true }); }}>

@@ -149,12 +149,17 @@ export function postPurchaseGroups(documents: PostPurchaseDocument[]) {
   }));
 }
 
+export function postPurchaseReviewGroups(documents: PostPurchaseDocument[]) {
+  return postPurchaseGroups(documents).filter((group) =>
+    group.documents.some((document) => !document.historicalOnly));
+}
+
 export function buildPostPurchasePayload(
   documents: PostPurchaseDocument[],
   decisions: Record<string, PostPurchaseDecision>,
   costs: Custo[],
 ) {
-  const groups = postPurchaseGroups(documents);
+  const groups = postPurchaseReviewGroups(documents);
   const adjustedDocuments = documents.map((document) => {
     const group = groups.find((candidate) => candidate.documents.some((item) => item.ref === document.ref));
     const decision = group && decisions[group.key];
