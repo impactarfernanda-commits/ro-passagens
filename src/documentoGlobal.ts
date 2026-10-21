@@ -70,7 +70,8 @@ export async function publicarOrientacoesViagem(
 ): Promise<PublicarDocumentoResultado> {
   const validation = validatePdfFile(file) || await validatePdfSignature(file);
   if (validation) throw new Error(validation);
-  const path = `orientacoes-viagem/${(deps.uuid || crypto.randomUUID)()}.pdf`;
+  const uuid = deps.uuid ? deps.uuid() : crypto.randomUUID();
+  const path = `orientacoes-viagem/${uuid}.pdf`;
   const uploadError = await deps.upload(path, file);
   if (uploadError) throw new Error("Não foi possível enviar o PDF. O documento vigente foi preservado.");
 

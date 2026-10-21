@@ -29,6 +29,21 @@ test("upload e RPC bem-sucedidos ativam nova versão e removem a anterior", asyn
   assert.equal(result.documento.versao, 2); assert.deepEqual(removed, [[current.storage_path]]); assert.equal(result.aviso, null);
 });
 
+test("fallback usa crypto.randomUUID ligado ao receiver quando deps.uuid não é fornecido", async () => {
+  let uploadedPath = "";
+  const result = await publicarOrientacoesViagem(file(), null, {
+    upload: async (path) => { uploadedPath = path; return null; },
+    register: async (path) => ({ data: { ...next(null), storage_path: path }, error: null }),
+    remove: async () => null,
+  });
+  assert.match(uploadedPath, /^orientacoes-viagem\/[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.pdf$/i);
+  assert.equal(result.documento.storage_path, uploadedPath);
+
+  const source = fs.readFileSync("src/documentoGlobal.ts", "utf8");
+  assert.match(source, /deps\.uuid \? deps\.uuid\(\) : crypto\.randomUUID\(\)/);
+  assert.doesNotMatch(source, /\(deps\.uuid \|\| crypto\.randomUUID\)\(\)/);
+});
+
 test("falha no upload não chama RPC nem remove o documento vigente", async () => {
   let rpc = 0; let remove = 0;
   await assert.rejects(publicarOrientacoesViagem(file(), current, {
