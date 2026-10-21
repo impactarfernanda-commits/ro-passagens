@@ -73,6 +73,8 @@ import { canonicalizeComplementaryDraft, complementaryGroupSignature, sha256Byte
 import { custosDePassagensComplementares } from "./dashboardImprevistos";
 import { additionalOperationalCostPayload, validateAdditionalOperationalCost } from "./additionalOperationalCost";
 import { visibleOperationalCostLabel, visibleOperationalCosts, visibleOperationalCostsTotal, type VisibleOperationalCost } from "./requesterOperationalCosts";
+import { OrientacoesViagemConfig } from "./OrientacoesViagemConfig";
+import { criarUrlOrientacoes, obterOrientacoesViagem, type DocumentoGlobal } from "./documentoGlobal";
 import { DETAILED_JUSTIFICATION_MIN_LENGTH, detailedJustificationIsValid, travelLocationIsValid } from "./textQuality";
 import { autoMapHeaders, buildCollaboratorSuggestions, canKeepAsExternal, duplicateCpfRows, formatCpf, formatPhone, isSpreadsheetRows, isValidCpf, matchCollaborator, MAX_RH_XLSX_BYTES, normalizeCpf, normalizePhone, parseBirthDate, possibleMatches, resolveCollaboratorSuggestion, strongAuxiliaryMatches, validUf, type AddressField, type CollaboratorSuggestion, type ColumnMapping, type SpreadsheetRows } from "./addressImport";
 import type {
@@ -1638,12 +1640,13 @@ export function ConfiguracoesRH({ secao }: { secao?: "rh" | "calendario" } = {})
   return secao ? conteudo : <Page title="Configurações de RH" subtitle="Acesso exclusivo da administradora Fernanda">{conteudo}</Page>;
 }
 
-type AbaConfiguracoes = "responsaveis-ro" | "responsaveis-rh" | "calendario" | "importacoes";
+type AbaConfiguracoes = "responsaveis-ro" | "responsaveis-rh" | "calendario" | "importacoes" | "orientacoes-viagem";
 const ABAS_CONFIGURACOES: Array<{ id: AbaConfiguracoes; label: string }> = [
   { id: "responsaveis-ro", label: "Responsáveis RO" },
   { id: "responsaveis-rh", label: "Responsáveis RH" },
   { id: "calendario", label: "Calendário da empresa" },
   { id: "importacoes", label: "Importações" },
+  { id: "orientacoes-viagem", label: "Orientações de viagem" },
 ];
 
 export function Configuracoes() {
@@ -1689,6 +1692,7 @@ export function Configuracoes() {
         <div hidden={tipo !== "funcionarios"}><ImportacaoFuncionarios embedded /></div>
         <div hidden={tipo !== "centros-custo"}><ImportacaoCentrosCusto embedded /></div>
       </div>}
+      {aba === "orientacoes-viagem" && <OrientacoesViagemConfig />}
     </section>
   </Page>;
 }
@@ -1703,6 +1707,7 @@ export function Detalhe({ access, userId }: { access: Access; userId: string }) 
   const [documentosInternos,setDocumentosInternos]=useState<Array<{id:string;categoria:string;arquivo_nome:string;storage_path:string;url?:string}>>([]);
   const [enderecoResidencial,setEnderecoResidencial]=useState<{nome?:string;data_nascimento?:string|null;cpf?:string|null;rg?:string|null;telefone?:string|null;cep?:string|null;logradouro:string|null;numero?:string|null;complemento?:string|null;bairro:string|null;cidade:string;uf:string;atualizado_em:string}|null>(null);
   const [dadosEmissao,setDadosEmissao]=useState<{nome:string;data_nascimento:string|null;cpf:string|null;rg:string|null;telefone:string|null}|null>(null);
+  const [orientacoesViagem,setOrientacoesViagem]=useState<DocumentoGlobal|null>(null);
   const atualizarResolucaoHospedagem = useCallback((utilizada: boolean, justificativa: string | null) => {
     setRow((atual) => atual ? {
       ...atual,
@@ -1796,6 +1801,8 @@ export function Detalhe({ access, userId }: { access: Access; userId: string }) 
   useEffect(()=>{if(!id || !(access.isRh||access.isRO||access.isAdmin))return;supabase.from("ro_passagem_documentos_internos").select("id,categoria,arquivo_nome,storage_path").eq("solicitacao_id",id).then(async({data})=>{const docs=await Promise.all((data||[]).map(async(d)=>{const signed=await supabase.storage.from("ro-documentos-internos").createSignedUrl(d.storage_path,300);return {...d,url:signed.data?.signedUrl};}));setDocumentosInternos(docs);});},[id,access.isRh,access.isRO,access.isAdmin]);
   useEffect(()=>{if(!row||!(access.isRh||access.canImport))return;if(row.viajante_nome_informado)return;const request=row.colaborador_id?supabase.rpc("ro_obter_colaborador_detalhe",{p_colaborador_id:row.colaborador_id}):supabase.rpc("ro_obter_endereco_residencial_completo",{p_funcionario_id:row.funcionario_id});request.then(({data})=>setEnderecoResidencial((Array.isArray(data)?data[0]:data)||null))},[row,access.isRh,access.canImport]);
   useEffect(()=>{if(!row||!access.canOperateRO)return;supabase.rpc("ro_obter_dados_emissao_passagem",{p_solicitacao_id:row.id}).then(({data})=>setDadosEmissao((Array.isArray(data)?data[0]:data)||null))},[row,access.canOperateRO]);
+  const statusOrientacoes = row?.status;
+  useEffect(()=>{if(!statusOrientacoes||!["passagem_comprada","finalizada"].includes(statusOrientacoes))return;obterOrientacoesViagem(supabase).then(setOrientacoesViagem).catch(()=>setOrientacoesViagem(null));},[statusOrientacoes]);
   if (loading)
     return (
       <Page title="Solicitação">
@@ -1928,6 +1935,7 @@ export function Detalhe({ access, userId }: { access: Access; userId: string }) 
         anexos={row.anexos || []}
         custos={row.custos || []}
         orientacoesRo={row.observacoes_ro}
+        orientacoesViagem={orientacoesViagem}
         canViewCosts={canViewFinancialCosts(access)}
         canViewOperationalCosts={!access.canViewAll}
         canEditCosts={access.canOperateRO && operacaoLiberada && !row.excluida_em && !["cancelada", "recusada"].includes(row.status)}
@@ -2277,6 +2285,7 @@ function PassagemComprada({
   anexos,
   custos,
   orientacoesRo,
+  orientacoesViagem,
   canViewCosts,
   canViewOperationalCosts,
   canEditCosts,
@@ -2289,6 +2298,7 @@ function PassagemComprada({
   canAddAttachments: boolean;
   custos: Custo[];
   orientacoesRo: string | null;
+  orientacoesViagem: DocumentoGlobal | null;
   canViewCosts: boolean;
   canViewOperationalCosts: boolean;
   canEditCosts: boolean;
@@ -2308,6 +2318,15 @@ function PassagemComprada({
       return;
     }
     window.open(data.signedUrl, "_blank", "noopener,noreferrer");
+  }
+  async function baixarOrientacoes() {
+    if (!orientacoesViagem) return;
+    setErro("");
+    try {
+      window.open(await criarUrlOrientacoes(supabase, orientacoesViagem), "_blank", "noopener,noreferrer");
+    } catch {
+      setErro("Não foi possível baixar as orientações. Tente novamente.");
+    }
   }
   const soma = (tipo: Custo["tipo"]) =>
     custos
@@ -2408,6 +2427,10 @@ function PassagemComprada({
           </div>
         </section>
       )}
+      {orientacoesViagem && ["passagem_comprada", "finalizada"].includes(row.status) && <section className="global-travel-guidance" aria-labelledby="global-travel-guidance-title">
+        <div><h3 id="global-travel-guidance-title">Orientações para a viagem</h3><p>Baixe o informativo e encaminhe ao colaborador junto com as passagens.</p></div>
+        <button className="btn secondary" type="button" onClick={() => void baixarOrientacoes()}><ExternalLink size={16}/>Baixar orientações</button>
+      </section>}
       <h3 className="documents-heading">Documentos anexados</h3>
       {canAddAttachments && <AdicionarAnexo solicitacaoId={solicitacaoId} solicitacao={row} obras={obras} anexos={anexosPassagem} custos={custos} onDone={onCostUpdated} />}
       {anexosPassagem.length === 0 ? (

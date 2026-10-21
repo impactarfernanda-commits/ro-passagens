@@ -37,8 +37,8 @@ test("rota e único botão existente de Nova solicitação permanecem", () => {
   assert.match(solicitacoes, /to="\/nova"/);
 });
 
-test("Configurações possui quatro abas na ordem definida e persiste a seleção na URL", () => {
-  const labels = ["Responsáveis RO", "Responsáveis RH", "Calendário da empresa", "Importações"];
+test("Configurações possui cinco abas na ordem definida e persiste a seleção na URL", () => {
+  const labels = ["Responsáveis RO", "Responsáveis RH", "Calendário da empresa", "Importações", "Orientações de viagem"];
   const positions = labels.map((label) => config.indexOf(label));
   assert.ok(positions.every((position) => position >= 0));
   assert.deepEqual([...positions].sort((a, b) => a - b), positions);
@@ -52,6 +52,7 @@ test("abas reutilizam os componentes existentes sem duplicar operações", () =>
   assert.match(config, /<ConfiguracoesRH secao="calendario" \/>/);
   assert.match(config, /<ImportacaoFuncionarios embedded \/>/);
   assert.match(config, /<ImportacaoCentrosCusto embedded \/>/);
+  assert.match(config, /<OrientacoesViagemConfig \/>/);
   assert.doesNotMatch(config, /<EnderecosFuncionarios embedded \/>/);
   assert.equal((pages.match(/ro_importar_funcionarios/g) || []).length, 1);
   assert.equal((pages.match(/ro_importar_centros_custo_restritos/g) || []).length, 1);
