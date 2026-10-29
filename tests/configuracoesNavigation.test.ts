@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 const app = readFileSync(new URL("../src/App.tsx", import.meta.url), "utf8");
+const accessCache = readFileSync(new URL("../src/accessCache.ts", import.meta.url), "utf8");
 const components = readFileSync(new URL("../src/components.tsx", import.meta.url), "utf8");
 const pages = readFileSync(new URL("../src/pages.tsx", import.meta.url), "utf8");
 const styles = readFileSync(new URL("../src/styles.css", import.meta.url), "utf8");
@@ -27,7 +28,7 @@ test("menu não contém atalhos administrativos antigos nem Nova solicitação",
 test("Configurações usa exclusivamente a autorização da administradora do sistema", () => {
   assert.match(app, /canConfigure=\{access\.canImport\}/);
   assert.match(app, /path="\/configuracoes"[\s\S]*?access\.canImport\s*\?\s*<Configuracoes \/>\s*:\s*<Navigate to="\/solicitacoes" replace \/>/);
-  assert.match(app, /supabase\.rpc\("ro_is_system_admin"/);
+  assert.match(accessCache, /supabase\.rpc\("ro_is_system_admin"/);
   assert.doesNotMatch(sidebar, /canManageRO|canManageRh|isRO|role/);
 });
 

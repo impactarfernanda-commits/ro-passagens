@@ -6,7 +6,7 @@ import type {Solicitacao} from "../src/types.ts";
 
 const row=(patch:Partial<Solicitacao>={})=>({status:"solicitada",comprado_em:null,comprado_por:null,custos:[],anexos:[],...patch}) as Solicitacao;
 const page=readFileSync(new URL("../src/pages.tsx",import.meta.url),"utf8");
-const app=readFileSync(new URL("../src/App.tsx",import.meta.url),"utf8");
+const accessCache=readFileSync(new URL("../src/accessCache.ts",import.meta.url),"utf8");
 const auto=readFileSync(new URL("../supabase/migrations/202607240001_auto_finalizacao_solicitacoes.sql",import.meta.url),"utf8");
 const sql=readFileSync(new URL("../supabase/migrations/202608050002_recusa_solicitacao_ro.sql",import.meta.url),"utf8");
 const dry=readFileSync(new URL("../supabase/manual/DRY_RUN_202608050002_recusa_solicitacao_ro.sql",import.meta.url),"utf8");
@@ -50,4 +50,4 @@ test("dry run integral termina em rollback",()=>{const n=(v:string)=>v.replace(/
 test("grants públicos são revogados",()=>assert.match(sql,/revoke all on function[\s\S]*from public,anon/));
 test("verificação é somente leitura",()=>assert.doesNotMatch(verify,/\b(insert|update|delete|truncate|alter|drop|create)\b/i));
 test("smoke isolado começa BEGIN e termina ROLLBACK",()=>{assert.match(smoke,/^begin;/i);assert.match(smoke,/rollback;\s*$/i);});
-test("App deriva operação da associação RO ativa",()=>assert.match(app,/\.from\("ro_responsaveis"\)[\s\S]*\.eq\("ativo", true\)[\s\S]*canOperateRO: isRO/));
+test("App deriva operação da associação RO ativa",()=>assert.match(accessCache,/\.from\("ro_responsaveis"\)[\s\S]*\.eq\("ativo",true\)[\s\S]*canOperateRO:isRO/));

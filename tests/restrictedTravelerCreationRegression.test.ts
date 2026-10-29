@@ -7,6 +7,7 @@ const previous=readFileSync("supabase/migrations/202610060001_regras_especiais_r
 const helper=readFileSync("supabase/migrations/202609210002_corrige_disponibilidade_viajantes_restrito_ro.sql","utf8");
 const catalog=readFileSync("supabase/migrations/202609220001_corrige_visibilidade_catalogo_viajantes.sql","utf8");
 const frontend=readFileSync("src/pages.tsx","utf8");
+const catalogCache=readFileSync("src/catalogCache.ts","utf8");
 const errors=readFileSync("src/creationErrorMessages.ts","utf8");
 const dryRun=readFileSync("supabase/manual/DRY_RUN_202610140001_corrige_regressao_disponibilidade_restrito_ro.sql","utf8");
 const prevalidator=readFileSync("supabase/manual/prevalidar_correcao_restrito_ro_20261014.sql","utf8");
@@ -78,7 +79,7 @@ test("validadores são somente leitura e cobrem pré, rollback e pós-instalaç�
 });
 
 test("frontend e tradução do erro permanecem inalterados",()=>{
-  assert.match(frontend,/rpc\("ro_catalogo_colaboradores_viagem"\)/);
+  assert.match(catalogCache,/rpc\("ro_catalogo_colaboradores_viagem"\)/);
   assert.match(frontend,/rpc\("ro_criar_solicitacao_com_aprovador"/);
   assert.match(errors,/FUNCIONARIO_INDISPONIVEL[\s\S]*O funcionário selecionado não está mais disponível/i);
   assert.doesNotMatch(migration,/src\/|pages\.tsx|creationErrorMessages/i);

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Navigate, Route, Routes, useLocation } from "react-router-dom";
 import type { Session } from "@supabase/supabase-js";
 import { configured, supabase } from "./supabase";
@@ -17,34 +17,11 @@ import { Relatorios } from "./Relatorios";
 import { podeAcessarAreasGerais, podeAcessarImportacaoEnderecos } from "./addressAccess";
 import { PasswordRecovery } from "./PasswordRecovery";
 import { Logout } from "./Logout";
+import { EMPTY_ACCESS, invalidateAccess, loadAccess, subscribeAccessInvalidation, type Access } from "./accessCache";
+import { setCatalogCacheUser } from "./catalogCache";
+import { subscribeVisible } from "./visibilityRevalidation";
 
-export type Access = {
-  isRO: boolean;
-  isAdmin: boolean;
-  canViewAll: boolean;
-  canOperateRO: boolean;
-  canManageRO: boolean;
-  canImport: boolean;
-  role: string | null;
-  isRh: boolean;
-  canManageRh: boolean;
-  canApprove: boolean;
-  isDenise: boolean;
-};
-
-const EMPTY_ACCESS: Access = {
-  isRO: false,
-  isAdmin: false,
-  canViewAll: false,
-  canOperateRO: false,
-  canManageRO: false,
-  canImport: false,
-  role: null,
-  isRh: false,
-  canManageRh: false,
-  canApprove: false,
-  isDenise: false,
-};
+export type { Access } from "./accessCache";
 
 function accessLabel(access: Access) {
   if (access.isRO) return "Equipe RO";
@@ -64,7 +41,10 @@ export function App() {
   const [side, setSide] = useState(false);
   const [access, setAccess] = useState<Access>(EMPTY_ACCESS);
   const [userName, setUserName] = useState("");
+  const accessRequest = useRef(0);
   const clearLocalAuthState = useCallback(() => {
+    invalidateAccess();
+    setCatalogCacheUser(null);
     setSession(null);
     setRecoveryOnly(false);
     setAccess(EMPTY_ACCESS);
@@ -79,6 +59,9 @@ export function App() {
     });
     const { data } = supabase.auth.onAuthStateChange((event, s) => {
       setSession(s);
+      setCatalogCacheUser(s?.user.id || null);
+      if (event === "USER_UPDATED" && s) invalidateAccess(s.user.id);
+      if (event === "SIGNED_OUT") invalidateAccess();
       if (event === "PASSWORD_RECOVERY") setRecoveryOnly(true);
       if (event === "SIGNED_OUT") setRecoveryOnly(false);
     });
@@ -90,43 +73,28 @@ export function App() {
       setAccessLoading(false);
       return;
     }
+    setCatalogCacheUser(session.user.id);
     setAccessLoading(true);
-    Promise.all([
-      supabase.from("user_roles").select("role").eq("user_id", session.user.id),
-      supabase.from("users_profiles").select("full_name").eq("id", session.user.id).maybeSingle(),
-      supabase
-        .from("ro_responsaveis")
-        .select("id")
-        .eq("user_id", session.user.id)
-        .eq("ativo", true)
-        .maybeSingle(),
-      supabase.rpc("ro_is_system_admin", { p_user: session.user.id }),
-      supabase.rpc("ro_is_rh_active", { p_user_id: session.user.id }),
-      supabase.rpc("ro_can_manage_rh"),
-      supabase.rpc("ro_is_approval_candidate"),
-      supabase.rpc("ro_is_denise"),
-    ])
-      .then(([roles, profile, ro, systemAdmin, rh, manageRh, approver, denise]) => {
-        const names = (roles.data || []).map((r) => String(r.role));
-        const role = names.includes("diretor") ? "diretor" : names.includes("gerente") ? "gerente" : names[0] || null;
-        const isAdmin = names.some((r) => ["gerente", "diretor"].includes(r));
-        const isRO = Boolean(ro.data);
-        setUserName(profile.data?.full_name || session.user.user_metadata?.full_name || session.user.email || "Usuário");
-        setAccess({
-          role,
-          isRO,
-          isAdmin,
-          canViewAll: isAdmin || isRO,
-          canOperateRO: isRO,
-          canManageRO: isAdmin,
-          canImport: Boolean(systemAdmin.data),
-          isRh: Boolean(rh.data),
-          canManageRh: Boolean(manageRh.data),
-          canApprove: Boolean(approver.data),
-          isDenise: Boolean(denise.data),
-        });
-      })
-      .finally(() => setAccessLoading(false));
+    let active = true;
+    const refresh = () => {
+      const request = ++accessRequest.current;
+      return loadAccess(session).then((snapshot) => {
+        if (!active || request !== accessRequest.current) return;
+        setUserName(snapshot.userName);
+        setAccess(snapshot.access);
+      }).finally(() => { if (active && request === accessRequest.current) setAccessLoading(false); });
+    };
+    const unsubscribe = subscribeAccessInvalidation((userId) => {
+      if (!userId || userId === session.user.id) void refresh();
+    });
+    const unsubscribeVisibility = subscribeVisible(document, () => { void refresh(); });
+    void refresh();
+    return () => {
+      active = false;
+      accessRequest.current += 1;
+      unsubscribe();
+      unsubscribeVisibility();
+    };
   }, [session]);
   if (location.pathname === "/logout") return <Logout clearLocalAuthState={clearLocalAuthState} />;
   if (recoveryOnly && location.pathname !== "/redefinir-senha") return <Navigate to="/redefinir-senha" replace />;

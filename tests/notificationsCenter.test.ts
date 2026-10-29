@@ -3,12 +3,12 @@ import fs from "node:fs";
 import test from "node:test";
 
 const components = fs.readFileSync("src/components.tsx", "utf8");
-const app = fs.readFileSync("src/App.tsx", "utf8");
+const accessCache = fs.readFileSync("src/accessCache.ts", "utf8");
 const migration = fs.readFileSync("supabase/migrations/202610010001_notificacoes_usuario.sql", "utf8");
 const approvals = fs.readFileSync("supabase/migrations/202608210001_pacote_1_aprovadores_individuais_denise.sql", "utf8");
 
 test("sidebar identifica o usuário e o perfil acima de sair", () => {
-  assert.match(app, /users_profiles.*full_name/);
+  assert.match(accessCache, /users_profiles.*full_name/);
   assert.match(components, /className="side-user"[\s\S]*?<strong>\{userName\}<\/strong>[\s\S]*?<span>\{profileLabel\}/);
   assert.ok(components.indexOf('className="side-user"') < components.indexOf("<LogOut"));
 });

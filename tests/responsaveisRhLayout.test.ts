@@ -35,7 +35,7 @@ test("adição RH usa apenas ro_rh_responsaveis, evita duplicidade e limpa sele�
   assert.match(rh, /supabase\.from\("ro_rh_responsaveis"\)\.upsert/);
   assert.doesNotMatch(rh, /supabase\.from\("ro_responsaveis"\)/);
   assert.match(rh, /!rh\.some\(\(row\)=>row\.user_id===selectedRh\)/);
-  assert.match(rh, /if\(!error&&busyId==="add"\)setSelectedRh\(""\)/);
+  assert.match(rh, /if\(!error\)\{invalidateAccess\(userId\);if\(busyId==="add"\)setSelectedRh\(""\)\}/);
 });
 
 test("lista compartilhada mostra nome, status e ação equivalentes ao RO", () => {

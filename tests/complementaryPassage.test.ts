@@ -11,6 +11,7 @@ import {
 import type { Obra } from "../src/types.ts";
 
 const page = fs.readFileSync("src/pages.tsx", "utf8");
+const catalogCache = fs.readFileSync("src/catalogCache.ts", "utf8");
 const request = {
   obra_id: "obra",
   centro_custo_destino_id: "destino",
@@ -79,7 +80,7 @@ test("catálogo sem os marcadores explícitos de elegibilidade falha fechado", (
     complementaryCostCenters(request, [{ id: "obra", nome: "Obra" }]),
     [],
   );
-  assert.match(page, /select\("id,codigo,descricao,visivel_passagens,escopo_passagens"\)/);
+  assert.match(catalogCache, /select\("id,codigo,descricao,visivel_passagens,escopo_passagens"\)/);
 });
 
 test("centro selecionado é enviado em anexos e custos complementares", () => {

@@ -44,6 +44,9 @@ import { deduplicateNotifications } from "./notifications";
 import { buildPurchaseCosts, totalTicketValues } from "./purchaseCosts";
 import { buildPurchaseAttachmentInsert } from "./purchaseAttachmentPayload";
 import { supabase } from "./supabase";
+import { invalidateAccess } from "./accessCache";
+import { getCatalogCacheUser, invalidateCatalogs, loadCatalogs, subscribeCatalogInvalidation } from "./catalogCache";
+import { subscribeVisible } from "./visibilityRevalidation";
 import { isRateLimitError, PASSWORD_MIN_LENGTH, PASSWORD_RECOVERY_MESSAGE, PASSWORD_RECOVERY_REDIRECT } from "./auth";
 import { calcularDataMinima, canExcepcionarPrazo, categoriaDocumento, dataMinimaDoInput, limparDataIdaInvalida, mensagemAntecedencia, motivoAoSelecionarFuncionario, motivoPermiteExcecaoPrazo, motivosPermitidos, regraPrazo } from "./passagemRules";
 import { motivoPrefillPermitido, motivoRecusaValido, podeRecusarSolicitacao, statusContaComoAberto } from "./recusaRules";
@@ -102,19 +105,27 @@ function useCatalogos() {
   const [funcionarios, setF] = useState<Funcionario[]>([]);
   const [obras, setO] = useState<Obra[]>([]);
   const [ready, setReady] = useState(false);
+  const catalogRequest = useRef(0);
   useEffect(() => {
-    Promise.all([supabase.rpc("ro_catalogo_colaboradores_viagem"), supabase.rpc("ro_catalogo_centros_custo")]).then(async ([funcionariosResult, centrosResult]) => {
-      setF((funcionariosResult.data || []) as Funcionario[]);
-      const data = centrosResult.data;
-      const catalogo = (data || []) as Obra[];
-      if (!catalogo.length) setO([]);
-      else {
-        const { data: detalhes } = await supabase.from("obras").select("id,codigo,descricao,visivel_passagens,escopo_passagens").in("id", catalogo.map((obra) => obra.id));
-        const porId = new Map((detalhes || []).map((obra) => [obra.id, obra]));
-        setO(catalogo.map((obra) => ({ ...obra, ...porId.get(obra.id) })));
-      }
-      setReady(true);
+    let active = true;
+    const refresh = () => {
+      const request = ++catalogRequest.current;
+      return loadCatalogs().then(({ funcionarios, obras }) => {
+        if (!active || request !== catalogRequest.current) return;
+        setF(funcionarios); setO(obras); setReady(true);
+      });
+    };
+    const unsubscribe = subscribeCatalogInvalidation((userId) => {
+      if (!userId || userId === getCatalogCacheUser()) void refresh();
     });
+    const unsubscribeVisibility = subscribeVisible(document, () => { void refresh(); });
+    void refresh();
+    return () => {
+      active = false;
+      catalogRequest.current += 1;
+      unsubscribe();
+      unsubscribeVisibility();
+    };
   }, []);
   return { funcionarios, obras, ready };
 }
@@ -1624,7 +1635,7 @@ export function ConfiguracoesRH({ secao }: { secao?: "rh" | "calendario" } = {})
     ]); const perfis=(u.data||[]) as Perfil[]; setUsuarios(perfis); setRh((r.data||[]).map((x)=>({...x,perfil:perfis.find((p)=>p.id===x.user_id)}))); setDias(c.data||[]); setAnoStatus(a.data); setRhLoading(false);
   },[ano,busca]);
   useEffect(()=>{carregar();},[carregar]);
-  async function salvarRh(userId:string,ativo:boolean,busyId:string){if(rhBusy)return;setRhBusy(busyId);const {error}=await supabase.from("ro_rh_responsaveis").upsert({user_id:userId,ativo},{onConflict:"user_id"});setMensagem(error?"Não foi possível alterar a equipe RH.":"Equipe RH atualizada.");if(!error&&busyId==="add")setSelectedRh("");await carregar();setRhBusy(null);}
+  async function salvarRh(userId:string,ativo:boolean,busyId:string){if(rhBusy)return;setRhBusy(busyId);const {error}=await supabase.from("ro_rh_responsaveis").upsert({user_id:userId,ativo},{onConflict:"user_id"});setMensagem(error?"Não foi possível alterar a equipe RH.":"Equipe RH atualizada.");if(!error){invalidateAccess(userId);if(busyId==="add")setSelectedRh("")}await carregar();setRhBusy(null);}
   async function adicionarDia(e:React.FormEvent){e.preventDefault();const local=novo.abrangencia==="estadual"?{estado:"SP",municipio:null}:novo.abrangencia==="municipal"?{estado:"SP",municipio:"Rio Claro"}:{estado:null,municipio:null};const {error}=await supabase.from("ro_calendario_nao_util").insert({...novo,...local});setMensagem(error?"Não foi possível cadastrar a data.":"O calendário foi alterado. Revise as datas e valide novamente o ano.");await carregar();}
   async function validarAno(completo:boolean){const {error}=await supabase.from("ro_calendario_anos").upsert({ano,completo},{onConflict:"ano"});setMensagem(error?"Não foi possível validar o ano.":completo?"Ano validado.":"Ano marcado como incompleto.");await carregar();}
   async function editarDescricao(id:string,atual:string){const descricao=window.prompt("Nova descrição",atual)?.trim();if(!descricao)return;await supabase.from("ro_calendario_nao_util").update({descricao}).eq("id",id);await carregar();}
@@ -3542,7 +3553,7 @@ export function ImportacaoCentrosCusto({ embedded = false }: { embedded?: boolea
   async function importar() {
     setBusy(true); setErro(""); setResultado(null);
     const { data, error } = await supabase.rpc("ro_importar_centros_custo_restritos", { p_linhas: linhas });
-    if (error) setErro(error.message); else setResultado(data as unknown as CostCenterImportResult);
+    if (error) setErro(error.message); else { invalidateCatalogs(); setResultado(data as unknown as CostCenterImportResult); }
     setBusy(false);
   }
 
@@ -3610,7 +3621,7 @@ export function ImportacaoFuncionarios({ embedded = false }: { embedded?: boolea
   async function importar() {
     setBusy(true); setErro(""); setResultado(null);
     const { data, error } = await supabase.rpc("ro_importar_funcionarios", { p_linhas: linhas });
-    if (error) setErro(error.message); else setResultado(data as unknown as ImportResult);
+    if (error) setErro(error.message); else { invalidateCatalogs(); setResultado(data as unknown as ImportResult); }
     setBusy(false);
   }
 
@@ -3659,6 +3670,7 @@ export function Responsaveis({ embedded = false }: { embedded?: boolean } = {}) 
     await supabase
       .from("ro_responsaveis")
       .upsert({ user_id: selected, ativo: true }, { onConflict: "user_id" });
+    invalidateAccess(selected);
     setSelected("");
     load();
   }
@@ -3667,6 +3679,7 @@ export function Responsaveis({ embedded = false }: { embedded?: boolean } = {}) 
       .from("ro_responsaveis")
       .update({ ativo: !ativo })
       .eq("id", id);
+    invalidateAccess();
     load();
   }
   const conteudo = <ResponsibleAdminSection
@@ -3720,10 +3733,11 @@ export function EnderecosFuncionarios({embedded=false}:{embedded?:boolean}={}) {
     });setPreview(result);setConfirmed(false);setMessage("")
   }
   function resolveSuggestion(linha:number,choice:string){setPreview(current=>current.map(item=>{if(item.linha!==linha)return item;const suggestion=choice==="__external__"?null:item.sugestoes.find(candidate=>`${candidate.origem}:${candidate.id}`===choice)||null;return resolveCollaboratorSuggestion(item,suggestion)}));setConfirmed(false)}
-  async function save(){if(!confirmed)return;const {data,error}=await supabase.rpc("ro_importar_colaboradores_rh",{p_arquivo_nome:fileName,p_linhas:preview});setMessage(error?error.message:`Importação concluída: ${Number((data as {novos?:number})?.novos||0)} novo(s), ${Number((data as {atualizados?:number})?.atualizados||0)} atualizado(s), 0 funcionários criados no Obras Control.`);if(!error){setPreview([]);setRows([]);setConfirmed(false);load()}}
+  async function save(){if(!confirmed)return;const {data,error}=await supabase.rpc("ro_importar_colaboradores_rh",{p_arquivo_nome:fileName,p_linhas:preview});setMessage(error?error.message:`Importação concluída: ${Number((data as {novos?:number})?.novos||0)} novo(s), ${Number((data as {atualizados?:number})?.atualizados||0)} atualizado(s), 0 funcionários criados no Obras Control.`);if(!error){invalidateCatalogs();setPreview([]);setRows([]);setConfirmed(false);load()}}
   function openEmployee(employee:AddressEmployee){setEditorMessage(null);setSelectedEmployee(employee);setEditingAddress({id:employee.id,funcionario_id:employee.funcionario_id||"",nome:employee.nome,data_nascimento:employee.data_nascimento||"",cpf:employee.cpf||"",rg:employee.rg||"",telefone:employee.telefone||"",logradouro:normalizeStreetForDisplay(employee.logradouro),bairro:normalizeNeighborhoodForDisplay(employee.bairro),cidadeUf:formatCityUf(employee.cidade,employee.uf),ativo:employee.ativo})}
   function closeEmployee(){setSelectedEmployee(null);setEditorMessage(null)}
   async function saveManual(){const parsed=parseCityUf(editingAddress.cidadeUf);if(!parsed.ok){setEditorMessage({kind:"error",text:parsed.reason==="invalid"?"Informe uma UF válida.":"Informe a cidade e a UF."});return}const cleaned={...editingAddress,cidadeUf:formatCityUf(parsed.cidade,parsed.uf),logradouro:normalizeStreetForDisplay(editingAddress.logradouro),bairro:normalizeNeighborhoodForDisplay(editingAddress.bairro)};if(!selectedEmployee||!cleaned.nome.trim()||(cleaned.cpf&&!isValidCpf(cleaned.cpf))){setEditorMessage({kind:"error",text:"Revise nome e CPF."});return}const payload={...cleaned,cidade:parsed.cidade,estado:parsed.uf};delete (payload as Partial<typeof payload>).cidadeUf;setSavingEmployee(true);setEditorMessage(null);const {error}=await supabase.rpc("ro_salvar_colaborador_viagem",{p_colaborador:payload});setSavingEmployee(false);if(error){setEditorMessage({kind:"error",text:error.message});return}setEditingAddress(cleaned);setEmployees(current=>current.map(employee=>employee.id===selectedEmployee.id?{...employee,...payload,funcionario_id:payload.funcionario_id||null,logradouro:payload.logradouro||null,bairro:payload.bairro||null,uf:payload.estado}:employee));setSelectedEmployee(current=>current?{...current,...payload,funcionario_id:payload.funcionario_id||null,logradouro:payload.logradouro||null,bairro:payload.bairro||null,uf:payload.estado}:current);setEditorMessage({kind:"success",text:"Colaborador salvo com segurança."})}
+  useEffect(()=>{if(editorMessage?.kind==="success")invalidateCatalogs()},[editorMessage]);
   const counts=(status:AddressPreview["status"])=>preview.filter(x=>x.status===status).length;
   const blocked=counts("erro")+counts("possivel_duplicidade")+counts("conflito");
   const headerRow=Array.isArray(rows[0])?rows[0]:[];
